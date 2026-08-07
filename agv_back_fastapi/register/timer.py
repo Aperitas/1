@@ -14,7 +14,7 @@ from core.logger import logger
 from apscheduler.schedulers.background import BackgroundScheduler
 import random
 
-from agv_back_fastapi.utils.virtual_car_task import update_sim_car_pos
+from utils.virtual_car_task import update_sim_car_pos
 
 
 def detectUserStatus() :
