@@ -7,6 +7,9 @@ from typing import Optional,List
 
 from sqlmodel import SQLModel,Field,Relationship
 
+from enum import Enum
+from typing import Optional,List
+from sqlmodel import SQLModel,Field,Relationship
 
 class CarStatus(int,Enum) :
     INACTIVATE = 0  # 关机或者ros系统没有开启时表示为关机状态
@@ -29,5 +32,14 @@ class Cars(SQLModel,table=True) :
     ip: str
     port: str
     weight: float
+    tasks: List["Tasks"] = Relationship(back_populates="car")
+    devices: List["DeviceTypeLink"] = Relationship(back_populates="car_link")
+    # ============ 新增：南科大经纬度位置字段 ============
+    lon: Optional[float] = Field(default=113.9686, description="经度，南科大基准")
+    lat: Optional[float] = Field(default=22.6042, description="纬度，南科大基准")
+    yaw: Optional[float] = Field(default=0.0, description="航向角 0朝北")
+    speed: Optional[float] = Field(default=0.0, description="小车速度 m/s")
+    # ================================================
+
     tasks: List["Tasks"] = Relationship(back_populates="car")
     devices: List["DeviceTypeLink"] = Relationship(back_populates="car_link")

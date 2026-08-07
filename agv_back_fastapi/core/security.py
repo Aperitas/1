@@ -91,3 +91,15 @@ if __name__ == '__main__' :
     # 但 加密前 和 加密后 验证是一致的
     print(verify_password('123456','$2b$12$I5lfn4eO8M0oH4yYQWjSQ.t4VJz9cGKXA.ht6syIG6tAXmbnQywqa'))  # True
     print(verify_password('123456','$2b$12$h58wHhABGgNSRfQCqYFod.0mycfuLZIWQmtvKgP9s0VyYs78In6b.'))  # True
+
+from fastapi import Depends, HTTPException, status
+
+# 异步管理员鉴权，和上面get_current_user保持一致async写法
+async def get_current_admin(user = Depends(get_current_user)):
+    # get_current_user已经校验完token有效、用户存在
+    if not user.isAdmin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="仅管理员账号可执行此操作"
+        )
+    return user

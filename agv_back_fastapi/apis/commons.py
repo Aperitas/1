@@ -20,14 +20,13 @@ commons_api = APIRouter(prefix="/commons")
 
 @commons_api.get('/userinfo')
 async def get_user_info(user: Users = Depends(get_current_user),user_id:Optional[int]=None) :
+    target_user = None
     if user_id is not None:
         if user.isAdmin:
             with get_session() as session:
                 try:
-                    client_info = session.query(Users).get(user_id)
-                    if client_info is not None:
-                        data = OutputUser.from_orm(client_info)
-                    else:
+                    target_user = session.query(Users).get(user_id)
+                    if target_user is None:
                         raise UserNotExist("请求的用户不存在")
                 except Exception as e:
                     session.rollback()
@@ -36,8 +35,12 @@ async def get_user_info(user: Users = Depends(get_current_user),user_id:Optional
         else:
             raise PermissionNotEnough("你没有访问其他用户信息的权限")
     else:
-        data = OutputUser.from_orm(user)
-    data.roles = ["admin",] if user.isAdmin else ["client",]
+        # 不传user_id，查询登录者自己
+        target_user = user
+
+    data = OutputUser.from_orm(target_user)
+    # 判断【被查询用户】的isAdmin，不是登录者user
+    data.roles = ["admin"] if target_user.isAdmin else ["client"]
     return resp_200(data=data)
 
 

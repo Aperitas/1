@@ -25,6 +25,9 @@ from schemas.items import QueryInItems, OutputItems, SearchItems
 from utils.resp_code import resp_200, resp_500, resp_400
 from models.car.car import Cars, CarStatus
 from enum import Enum
+# 顶部导入区新增
+from utils.virtual_car_task import start_sim_task, stop_sim_task, get_sim_status
+from utils.geo_transform import xy_to_gps
 #from core import FastAPiNode
 
 
@@ -204,5 +207,84 @@ async def get_all_car_position():
     前端轮询获取所有小车实时位置
     完整路径：GET /api/admin/cars/position/all
     """
-    return resp_200(data=car_position_cache)
+    out_list = []
+    for car_id, pos_data in car_position_cache.items():
+        x = pos_data["x"]
+        y = pos_data["y"]
+        # XY平面坐标转真实GPS经纬度
+        lon, lat = xy_to_gps(x, y)
+        new_data = {
+            **pos_data,
+            "lon": lon,
+            "lat": lat
+        }
+        out_list.append(new_data)
+    return resp_200(data=out_list)
 
+# ====================== 新增接口1：获取全部小车列表（带经纬度，前端地图用） ======================
+@car_api.get("/list", summary="获取所有小车完整信息，包含地图GPS经纬度")
+async def get_car_list(user: Users = Depends(get_current_user)):
+    """
+    前端地图页面调用，返回每台小车 x/y/真实lon/lat/航向/是否虚拟车
+    路径：GET /api/cars/list
+    """
+    with get_session() as session:
+        # 查询数据库全部小车
+        all_cars = session.query(Cars).all()
+        result = []
+        for car in all_cars:
+            # 平面XY转南科大GPS经纬度
+            gps_lon, gps_lat = xy_to_gps(car.x, car.y)
+            map_item = CarMapOut(
+                car_id=car.id,
+                name=car.name,
+                status=car.status.value,
+                x=car.x,
+                y=car.y,
+                yaw=car.yaw,
+                speed=car.speed,
+                lon=gps_lon,
+                lat=gps_lat,
+                isSimulation=car.isSimulation
+            )
+            result.append(map_item.model_dump())
+    return resp_200(data=result)
+
+# ====================== 虚拟小车仿真控制接口（管理员专用） ======================
+@car_api.post("/simulation/start", summary="开启南科大虚拟小车自动巡游")
+async def start_virtual_car_sim(user: Users = Depends(get_current_user)):
+    # 仅管理员可操作
+    if not user.isAdmin:
+        return resp_400(msg="权限不足，仅管理员可操作虚拟仿真")
+    try:
+        start_sim_task()
+        logger.info("管理员开启虚拟小车自动移动仿真")
+        return resp_200(msg="虚拟小车巡游已开启，车辆将在南科大校园坐标内自动行驶", data={"sim_running": get_sim_status()})
+    except Exception as e:
+        logger.error(f"开启仿真失败：{str(e)}")
+        return resp_500(msg="开启仿真任务异常")
+
+
+@car_api.post("/simulation/stop", summary="停止虚拟小车自动巡游")
+async def stop_virtual_car_sim(user: Users = Depends(get_current_user)):
+    if not user.isAdmin:
+        return resp_400(msg="权限不足，仅管理员可操作虚拟仿真")
+    try:
+        stop_sim_task()
+        logger.info("管理员关闭虚拟小车自动移动仿真")
+        return resp_200(msg="虚拟小车巡游已停止，所有虚拟小车位置固定", data={"sim_running": get_sim_status()})
+    except Exception as e:
+        logger.error(f"关闭仿真失败：{str(e)}")
+        return resp_500(msg="关闭仿真任务异常")
+
+
+@car_api.get("/simulation/status", summary="查询当前虚拟仿真运行状态")
+async def get_virtual_sim_status(user: Users = Depends(get_current_user)):
+    if not user.isAdmin:
+        return resp_400(msg="权限不足，仅管理员可查询仿真状态")
+    try:
+        run_state = get_sim_status()
+        return resp_200(msg="查询成功", data={"sim_running": run_state})
+    except Exception as e:
+        logger.error(f"查询仿真状态失败：{str(e)}")
+        return resp_500(msg="查询仿真状态异常")

@@ -46,3 +46,15 @@ class OutputUser(UserIn) :
     create_time: datetime
     last_active_time: Optional[datetime] = None
     isActive: bool = False
+
+from pydantic import BaseModel, EmailStr
+from typing import Optional
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    nickname: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    isActive: Optional[bool] = None
+    isAdmin: Optional[bool] = None
+    address_id: Optional[int] = None
