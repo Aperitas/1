@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
-from db.db import get_session
+from db.session import get_session
 from models.path import Path
 from schemas.path import PathCreate, PathUpdate, PathOut
 from utils.resp_code import resp_200, resp_400, resp_500

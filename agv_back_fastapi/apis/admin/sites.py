@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
-from db.db import get_session
+from db.session import get_session
 from models.site import Site
 from schemas.path import SiteCreate, SiteUpdate, SiteOut
 from utils.resp_code import resp_200, resp_400, resp_500
