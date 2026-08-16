@@ -102,3 +102,27 @@ async def websocket_endpoint(websocket: WebSocket) :
             await websocket.send_json(data)
     except WebSocketDisconnect :
         pass
+
+@websocket_api.websocket("/map")
+async def websocket_map(websocket: WebSocket, token: str = None):
+    """
+    前端地图页面通过此 WebSocket 接收小车实时位置推送。
+    连接示例：ws://39.108.77.178:8001/ws/map?token=你的JWT
+    """
+    # 可选：验证 token（如果需要鉴权，取消注释下面的代码）
+    # if token:
+    #     tokeninfo = await check_jwt_token(token)
+    #     user_id = tokeninfo.id
+    # else:
+    #     user_id = 0  # 未认证用户
+
+    route = "map"  # 独立的广播通道
+    user_id = 0    # 或从 token 解析
+    await manager.connect(user_id, route, websocket)
+    try:
+        # 保持连接，等待消息（前端可能发心跳或关闭指令）
+        while True:
+            # 这里可以接收前端发来的消息（如心跳），也可忽略
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(user_id, route)

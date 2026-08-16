@@ -6,6 +6,7 @@ from schemas.position import CarReportIn
 from utils.resp_code import resp_200, resp_400
 from datetime import datetime
 import json
+from apis.websocket.process import manager
 
 router = APIRouter(prefix="/report", tags=["车端上报"])
 
@@ -27,4 +28,14 @@ async def car_status_report(data: CarReportIn, session: Session = Depends(get_se
 
     session.add(car)
     session.commit()
+    # 广播给所有订阅地图的前端
+    await manager.broadcast_json("map", {
+        "car_id": car.id,
+        "lon": car.lon,
+        "lat": car.lat,
+        "yaw": car.yaw,
+        "speed": car.speed,
+        "battery": car.battery,
+        "status": car.status  # 可选
+    })
     return resp_200(msg="状态更新成功")
