@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlmodel import Session
-from db.db import get_session
+from db.session import get_session
 from models.car import Cars
 from schemas.position import CarReportIn
 from utils.resp_code import resp_200, resp_400
