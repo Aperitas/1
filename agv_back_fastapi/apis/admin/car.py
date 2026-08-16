@@ -25,7 +25,6 @@ from schemas.items import QueryInItems, OutputItems, SearchItems
 from utils.resp_code import resp_200, resp_500, resp_400
 from models.car.car import Cars, CarStatus
 from enum import Enum
-from utils.geo_transform import xy_to_gps
 #from core import FastAPiNode
 
 
