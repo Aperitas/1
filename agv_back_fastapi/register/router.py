@@ -16,6 +16,10 @@ from apis.admin.paths import router as paths_router
 
 def register_router(app: FastAPI):
     """ 注册路由 """
+    admin_api.include_router(sites_router)
+    admin_api.include_router(waypoints_router)
+    admin_api.include_router(paths_router)
+
     app.include_router(test_api,prefix="/api/test")
     # app.include_router(redis_check.router, prefix=settings.API_PREFIX, tags=["Redis"])  # Redis(不需要权限)
     #
@@ -30,6 +34,3 @@ def register_router(app: FastAPI):
     #
     # # 权限(权限在每个接口上)
     # app.include_router(app_router, prefix=settings.API_PREFIX)
-    admin_api.include_router(sites_router)
-    admin_api.include_router(waypoints_router)
-    admin_api.include_router(paths_router)
