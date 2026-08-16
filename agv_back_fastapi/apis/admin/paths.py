@@ -4,7 +4,7 @@ from db.session import get_session
 from models.path import Path
 from schemas.path import PathCreate, PathUpdate, PathOut
 from utils.resp_code import resp_200, resp_400, resp_500
-from core.auth import get_current_user
+from core.security import get_current_user
 from models.user import Users
 from typing import List, Dict, Any
 
