@@ -27,10 +27,6 @@ class Cars(SQLModel, table=True):
     port: str
     weight: float
 
-    # 旧平面坐标（保留，但不再更新）
-    x: float = Field(default=0.0)
-    y: float = Field(default=0.0)
-
     # 真实GPS经纬度（车端上报）
     lon: Optional[float] = Field(default=113.9686, description="经度，南科大基准")
     lat: Optional[float] = Field(default=22.6042, description="纬度，南科大基准")
