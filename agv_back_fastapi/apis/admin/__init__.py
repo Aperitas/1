@@ -4,7 +4,7 @@ date:2022年05月31日
 """
 from fastapi import APIRouter
 
-admin_api = APIRouter(prefix='/admin')
+admin_api = APIRouter()
 from .items import items_api
 from .orders import order_api
 from .users import user_api
