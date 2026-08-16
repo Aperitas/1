@@ -14,8 +14,6 @@ from core.logger import logger
 from apscheduler.schedulers.background import BackgroundScheduler
 import random
 
-from utils.virtual_car_task import update_sim_car_pos
-
 
 def detectUserStatus() :
     with get_session() as session :
@@ -72,6 +70,5 @@ def register_timer(app: FastAPI) :
     sche.add_job(detectOrderStatus,next_run_time=datetime.now(),trigger='interval',seconds=3,id="detectOrderStatus")
     app.state.sche = sche
     # register_timer 函数内部追加这一行
-    app.state.sche.add_job(update_sim_car_pos, "interval", seconds=0.2, id="virtual_car_move")
     sche.start()
 
