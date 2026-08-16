@@ -28,7 +28,7 @@ from schemas.car_command import CarCommandIn
 from models.path import Path
 from enum import Enum
 #from core import FastAPiNode
-
+from sqlmodel import SQLModel, Session, select  # 如果已经有 SQLModel 或 select，就追加 Session
 
 car_api = APIRouter(prefix='/cars')
 
