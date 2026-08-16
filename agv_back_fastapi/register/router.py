@@ -6,10 +6,13 @@
 from fastapi import FastAPI
 from apis import *
 from core import settings
+from apis.admin import admin_api
 # from apis import app_router
 # from apis.deps import get_current_user
 # from apis.common import redis_check, login, dashboard
-
+from apis.admin.sites import router as sites_router
+from apis.admin.waypoints import router as waypoints_router
+from apis.admin.paths import router as paths_router
 
 def register_router(app: FastAPI):
     """ 注册路由 """
@@ -27,3 +30,6 @@ def register_router(app: FastAPI):
     #
     # # 权限(权限在每个接口上)
     # app.include_router(app_router, prefix=settings.API_PREFIX)
+    admin_api.include_router(sites_router)
+    admin_api.include_router(waypoints_router)
+    admin_api.include_router(paths_router)
