@@ -8,7 +8,7 @@ from core.security import get_current_user
 from models.user import Users
 from typing import List, Dict, Any
 import json
-router = APIRouter(prefix="/admin/paths", tags=["路线管理（新增）"])
+router = APIRouter(prefix="/admin/paths", tags=["路线管理"])
 
 @router.post("/", summary="保存路线（含节点序列和类型）")
 async def create_path(

@@ -8,7 +8,7 @@ from core.security import get_current_user
 from models.user import Users
 from typing import List
 
-router = APIRouter(prefix="/admin/sites", tags=["站点管理（新增）"])
+router = APIRouter(prefix="/admin/sites", tags=["站点管理"])
 
 @router.post("/", summary="新增站点")
 async def create_site(

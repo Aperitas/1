@@ -16,9 +16,6 @@ from apis.admin.paths import router as paths_router
 
 def register_router(app: FastAPI):
     """ 注册路由 """
-    admin_api.include_router(sites_router)
-    admin_api.include_router(waypoints_router)
-    admin_api.include_router(paths_router)
 
     app.include_router(test_api,prefix="/api/test")
     # app.include_router(redis_check.router, prefix=settings.API_PREFIX, tags=["Redis"])  # Redis(不需要权限)
@@ -28,6 +25,9 @@ def register_router(app: FastAPI):
     app.include_router(client_api,prefix=settings.API_PREFIX,tags=['Client'])
     app.include_router(admin_api,prefix=settings.API_PREFIX,tags=['Admin'])
     app.include_router(websocket_api,tags=['Websocket'])
+    app.include_router(sites_router)
+    app.include_router(waypoints_router)
+    app.include_router(paths_router)
     #
     # app.include_router(dashboard.router, prefix=settings.API_PREFIX, tags=["Dashboard"],
     #                    dependencies=[Security(get_current_user, scopes=[])])  # Dashboard(不需要权限,但需要登录)

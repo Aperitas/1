@@ -7,7 +7,7 @@ from utils.resp_code import resp_200, resp_400, resp_500
 from core.security import get_current_user
 from models.user import Users
 
-router = APIRouter(prefix="/admin/waypoints", tags=["路径点管理（新增）"])
+router = APIRouter(prefix="/admin/waypoints", tags=["路径点管理"])
 
 @router.post("/", summary="新增路径点")
 async def create_waypoint(
