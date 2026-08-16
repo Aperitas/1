@@ -59,8 +59,6 @@ async def get_car_list(user: Users = Depends(get_current_user)):
                 "car_id": car.id,
                 "name": car.name,
                 "status": car.status,      # 已经是 int
-                "x": car.x,               # 保留但前端已不用
-                "y": car.y,
                 "yaw": car.yaw,
                 "speed": car.speed,
                 "lon": car.lon,
