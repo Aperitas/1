@@ -14,6 +14,7 @@ from apis.admin.sites import router as sites_router
 from apis.admin.waypoints import router as waypoints_router
 from apis.admin.paths import router as paths_router
 from apis.client.report import router as report_router
+from apis.admin.maps import router as maps_router
 def register_router(app: FastAPI):
     """ 注册路由 """
 
@@ -29,6 +30,7 @@ def register_router(app: FastAPI):
     app.include_router(sites_router)
     app.include_router(waypoints_router)
     app.include_router(paths_router)
+    app.include_router(maps_router)
     #
     # app.include_router(dashboard.router, prefix=settings.API_PREFIX, tags=["Dashboard"],
     #                    dependencies=[Security(get_current_user, scopes=[])])  # Dashboard(不需要权限,但需要登录)
