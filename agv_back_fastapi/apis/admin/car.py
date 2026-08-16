@@ -25,6 +25,7 @@ from schemas.items import QueryInItems, OutputItems, SearchItems
 from utils.resp_code import resp_200, resp_500, resp_400
 from models.car.car import Cars, CarStatus
 from schemas.command import CarCommandIn
+from models.path import Path
 from enum import Enum
 #from core import FastAPiNode
 
