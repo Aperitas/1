@@ -1,5 +1,5 @@
-from sqlmodel import SQLModel, Field
-from typing import Optional, List, Dict
+from sqlmodel import SQLModel, Field, Relationship
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 import json
 
@@ -17,7 +17,8 @@ class Path(SQLModel, table=True):
     car_id: Optional[int] = Field(default=None, foreign_key="cars.id", description="若指定，则此路线专属于某辆车")
 
     created_at: Optional[datetime] = Field(default_factory=datetime.now)
-
+    map_id: Optional[int] = Field(default=None, foreign_key="maps.id")
+    map: Optional["Map"] = Relationship(back_populates="paths")
     def set_nodes(self, nodes: List[Dict[str, any]]):
         self.node_chain = json.dumps(nodes)
 

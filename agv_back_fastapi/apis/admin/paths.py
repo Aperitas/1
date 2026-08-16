@@ -6,6 +6,8 @@ from schemas.path import PathCreate, PathUpdate, PathOut
 from utils.resp_code import resp_200, resp_400, resp_500
 from core.security import get_current_user
 from models.user import Users
+from typing import Optional
+from fastapi import Query
 from typing import List, Dict, Any
 import json
 router = APIRouter(prefix="/admin/paths", tags=["路线管理"])
@@ -41,21 +43,21 @@ async def create_path(
         session.rollback()
         return resp_500(msg=f"保存失败：{str(e)}")
 
-@router.get("/", summary="获取所有路线（可筛选类型或小车）")
+@router.get("/", summary="获取所有路线（可筛选类型、小车或地图）")
 async def list_paths(
-        path_type: str = None,
-        car_id: int = None,
+        path_type: Optional[str] = Query(None, description="路线类型: 吸附道路/贝塞尔曲线/折线"),
+        car_id: Optional[int] = Query(None, description="关联小车ID"),
+        map_id: Optional[int] = Query(None, description="按地图ID筛选"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
-    """
-    支持按路线类型或关联小车筛选。
-    """
     query = select(Path)
     if path_type:
         query = query.where(Path.path_type == path_type)
     if car_id:
         query = query.where(Path.car_id == car_id)
+    if map_id is not None:
+        query = query.where(Path.map_id == map_id)
     paths = session.exec(query).all()
     result = []
     for p in paths:

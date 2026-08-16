@@ -6,6 +6,8 @@ from schemas.path import WaypointCreate, WaypointUpdate
 from utils.resp_code import resp_200, resp_400, resp_500
 from core.security import get_current_user
 from models.user import Users
+from typing import Optional
+from fastapi import Query
 
 router = APIRouter(prefix="/admin/waypoints", tags=["路径点管理"])
 
@@ -29,10 +31,14 @@ async def create_waypoint(
 
 @router.get("/", summary="获取所有路径点")
 async def list_waypoints(
+        map_id: Optional[int] = Query(None, description="按地图ID筛选"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
-    wps = session.exec(select(Waypoint)).all()
+    query = select(Waypoint)
+    if map_id is not None:
+        query = query.where(Waypoint.map_id == map_id)
+    wps = session.exec(query).all()
     return resp_200(data=[w.dict() for w in wps])
 
 @router.get("/{wp_id}", summary="获取单个路径点详情")

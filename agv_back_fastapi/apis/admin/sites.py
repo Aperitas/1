@@ -7,6 +7,8 @@ from utils.resp_code import resp_200, resp_400, resp_500
 from core.security import get_current_user
 from models.user import Users
 from typing import List
+from typing import Optional
+from fastapi import Query
 
 router = APIRouter(prefix="/admin/sites", tags=["站点管理"])
 
@@ -33,13 +35,14 @@ async def create_site(
 
 @router.get("/", summary="获取所有站点列表")
 async def list_sites(
+        map_id: Optional[int] = Query(None, description="按地图ID筛选"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
-    """
-    返回所有站点，支持后续分页。
-    """
-    sites = session.exec(select(Site)).all()
+    query = select(Site)
+    if map_id is not None:
+        query = query.where(Site.map_id == map_id)
+    sites = session.exec(query).all()
     return resp_200(data=[s.dict() for s in sites])
 
 @router.get("/{site_id}", summary="获取单个站点详情")
