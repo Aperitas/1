@@ -2,6 +2,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select
 from db.session import get_session
 from models.map import Map
+from models.site import Site
+from models.waypoint import Waypoint
+from models.path import Path
 from schemas.map import MapCreate, MapUpdate, MapOut
 from utils.resp_code import resp_200, resp_400, resp_500
 from core.security import get_current_user
