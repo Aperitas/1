@@ -22,6 +22,9 @@ class UpdateUser(SQLModel) :
     phone: Optional[int] = Field(default=None)
     nickname: Optional[str] = None
     address_id: Optional[int] = None
+    # ===== 新增：用户默认地图ID（管理员更新用户时可修改） =====
+    map_id: Optional[int] = Field(default=None, description="用户默认地图ID")
+    # ===========================================================
 
 
 class CreateUser(UpdateUser,UserIn) :
@@ -49,6 +52,9 @@ class OutputUser(UserIn) :
     create_time: datetime
     last_active_time: Optional[datetime] = None
     isActive: bool = False
+    # ===== 新增：用户默认地图ID =====
+    map_id: Optional[int] = Field(default=None, description="用户默认地图ID")
+    # ===============================
 
 from pydantic import BaseModel, EmailStr
 from typing import Optional
@@ -61,3 +67,6 @@ class UserUpdate(BaseModel):
     isActive: Optional[bool] = None
     isAdmin: Optional[bool] = None
     address_id: Optional[int] = None
+    # ===== 新增：用户默认地图ID（管理员更新用户时可修改） =====
+    map_id: Optional[int] = Field(default=None, description="用户默认地图ID")
+    # ===========================================================
