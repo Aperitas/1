@@ -2,33 +2,31 @@ import datetime
 import uuid
 from pathlib import Path
 from typing import Optional
-import datetime
-from core.logger import logger
-from schemas.position import CarUploadMsg
-from utils.resp_code import resp_200
+from enum import Enum
+
 import cv2
 import numpy as np
 from fastapi import APIRouter, Request, UploadFile, Depends
 from starlette.responses import StreamingResponse
-from utils import detect_surface
+from sqlmodel import Session, select
+
 from core.config import settings
 from core.logger import logger
 from core.security import get_current_user
 from crud.items import itemCrud
 from db.session import get_session
+from models.car.car import Cars, CarStatus
 from models.car.tasks import Tasks, TaskStatus
-from models.item.items import Items
+from models.item.items import Items, UserOrder, OrderStatus
 from models.item.links import ItemProcessLink
-from models.item.items import UserOrder, OrderStatus
+from models.path import Path
 from models.user.users import Users
 from schemas.items import QueryInItems, OutputItems, SearchItems
-from utils.resp_code import resp_200, resp_500, resp_400
-from models.car.car import Cars, CarStatus
+from schemas.position import CarUploadMsg
 from schemas.car_command import CarCommandIn
-from models.path import Path
-from enum import Enum
-#from core import FastAPiNode
-from sqlmodel import SQLModel, Session, select  # 如果已经有 SQLModel 或 select，就追加 Session
+from utils.resp_code import resp_200, resp_500, resp_400
+from utils import detect_surface
+from apis.websocket.process import manager
 
 car_api = APIRouter(prefix='/cars')
 
@@ -40,10 +38,9 @@ async def gen_frames(frame):
            b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
 
 
-
-
-# 全局内存缓存，存放实时小车位置
+# 全局内存缓存，存放实时小车位置（仅供临时测试用）
 car_position_cache = {}
+
 
 @car_api.get("/list", summary="获取所有小车完整信息，包含地图GPS经纬度")
 async def get_car_list(user: Users = Depends(get_current_user)):
@@ -54,20 +51,20 @@ async def get_car_list(user: Users = Depends(get_current_user)):
         all_cars = session.query(Cars).all()
         result = []
         for car in all_cars:
-            # 直接拼装返回数据，不再依赖任何中间 Schema
             item = {
                 "car_id": car.id,
                 "name": car.name,
-                "status": car.status,      # 已经是 int
+                "status": car.status,
                 "yaw": car.yaw,
                 "speed": car.speed,
                 "lon": car.lon,
                 "lat": car.lat,
-                "battery": car.battery,   # 新增：电量也返回给前端
-
+                "battery": car.battery,
             }
             result.append(item)
     return resp_200(data=result)
+
+
 @car_api.post("/{car_id}/command", summary="下发指令给小车")
 async def send_command(
         car_id: int,
@@ -92,19 +89,28 @@ async def send_command(
     if data.command in ["start", "goto"]:
         if not data.path_id:
             return resp_400(msg="start/goto 指令需要指定 path_id")
-        # 加载路线
-        from models.path import Path
         path = session.get(Path, data.path_id)
         if not path:
             return resp_400(msg="路线不存在")
-        # 更新小车状态
         car.status = CarStatus.WORKING
         car.current_task_id = data.path_id
         session.add(car)
         session.commit()
-        # TODO: 此处实际下发路线给车端（通过TCP/WebSocket/HTTP）
         logger.info(f"管理员 {user.name} 下发指令 {data.command} 给小车 {car_id}，路线ID: {data.path_id}")
-        # 模拟下发成功
+
+        # ===== WebSocket 推送指令给车端 =====
+        ws_msg = {
+            "command": data.command,
+            "path_id": data.path_id,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        try:
+            await manager.send_personal_json(ws_msg, car_id, "command")
+            logger.info(f"指令已通过 WebSocket 推送给车端 {car_id}")
+        except Exception as e:
+            logger.error(f"WebSocket 推送失败: {e}")
+        # ===================================
+
         return resp_200(msg=f"指令 {data.command} 已下发，小车开始行驶")
 
     elif data.command == "stop":
@@ -112,8 +118,16 @@ async def send_command(
         car.current_task_id = None
         session.add(car)
         session.commit()
-        # TODO: 通知车端停止
         logger.info(f"管理员 {user.name} 下发指令 stop 给小车 {car_id}")
+
+        # ===== WebSocket 推送停止指令 =====
+        ws_msg = {"command": "stop", "timestamp": datetime.datetime.now().isoformat()}
+        try:
+            await manager.send_personal_json(ws_msg, car_id, "command")
+        except Exception:
+            pass
+        # ================================
+
         return resp_200(msg="小车已停止")
 
     elif data.command == "pause":
@@ -123,6 +137,13 @@ async def send_command(
         session.add(car)
         session.commit()
         logger.info(f"管理员 {user.name} 下发指令 pause 给小车 {car_id}")
+
+        ws_msg = {"command": "pause", "timestamp": datetime.datetime.now().isoformat()}
+        try:
+            await manager.send_personal_json(ws_msg, car_id, "command")
+        except Exception:
+            pass
+
         return resp_200(msg="小车已暂停")
 
     elif data.command == "resume":
@@ -132,6 +153,13 @@ async def send_command(
         session.add(car)
         session.commit()
         logger.info(f"管理员 {user.name} 下发指令 resume 给小车 {car_id}")
+
+        ws_msg = {"command": "resume", "timestamp": datetime.datetime.now().isoformat()}
+        try:
+            await manager.send_personal_json(ws_msg, car_id, "command")
+        except Exception:
+            pass
+
         return resp_200(msg="小车已恢复运行")
 
     else:
