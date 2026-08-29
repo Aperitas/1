@@ -4,7 +4,6 @@ date:2022年05月31日
 """
 from datetime import datetime
 from typing import Optional,List
-
 from pydantic import EmailStr
 from sqlmodel import SQLModel,Field,Relationship
 
@@ -22,8 +21,15 @@ class Users(SQLModel,table=True) :
     nickname: str
     email: EmailStr = Field(index=True)
     phone: Optional[int] = Field(default=None)
-
     address_id: Optional[int] = Field(default=None,foreign_key="city.union_id")
-    address:Optional["City"] = Relationship(back_populates="userList")
-    selfItems:List["Items"] = Relationship(back_populates="user")
+
+    # ===== 新增：关联地图 =====
+    map_id: Optional[int] = Field(default=None, foreign_key="maps.id")
+    # =========================
+
+    address: Optional["City"] = Relationship(back_populates="userList")
+    selfItems: List["Items"] = Relationship(back_populates="user")
     UserOrders: List["UserOrder"] = Relationship(back_populates="user")
+    # ===== 新增：地图反向关系 =====
+    map: Optional["Map"] = Relationship(back_populates="users")
+    # =============================

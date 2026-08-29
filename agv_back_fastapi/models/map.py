@@ -1,6 +1,7 @@
 from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional, List
 from datetime import datetime
+from models.user import Users
 
 class Map(SQLModel, table=True):
     __tablename__ = "maps"
@@ -17,3 +18,6 @@ class Map(SQLModel, table=True):
     sites: List["Site"] = Relationship(back_populates="map")
     waypoints: List["Waypoint"] = Relationship(back_populates="map")
     paths: List["Path"] = Relationship(back_populates="map")
+    # ===== 新增：用户反向关系 =====
+    users: List["Users"] = Relationship(back_populates="map")
+    # ==============================

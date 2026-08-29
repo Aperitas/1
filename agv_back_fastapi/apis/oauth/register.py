@@ -28,6 +28,10 @@ async def register_user(userInfo: CreateUser) :
         userInfo.hashed_password = get_password_hash(userInfo.password)
         userInfo.address_id = userInfo.address[1]
         userInfo.create_time = datetime.datetime.now()
+        # ===== 新增：处理 map_id =====
+        if userInfo.map_id is None:
+            userInfo.map_id = 1  # 默认地图ID为1
+        # =============================
         userCrud.create(userInfo)
     except Exception as e :
         logger.error(f'数据库连接失败！-- {e}')

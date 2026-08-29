@@ -33,6 +33,9 @@ class CreateUser(UpdateUser,UserIn) :
     create_time: datetime = datetime.now()
     isAdmin: bool = False
     code: str = Field(max_length=6)
+    # ===== 新增：用户选择的地图ID =====
+    map_id: Optional[int] = Field(default=None, description="用户默认地图ID")
+    # ========================================
 
 
 class OutputUser(UserIn) :
