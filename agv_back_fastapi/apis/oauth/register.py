@@ -22,8 +22,8 @@ async def register_user(userInfo: CreateUser) :
     user_email = userCrud.get_by_email(userInfo.email)
     if user_email != None :
         return resp_400(msg="该邮箱已经被注册，请更换邮箱")
-    emailvalidData = EmailValidForm(email=userInfo.email,valid_code=userInfo.code)
-    await valid_email(emailvalidData)
+    #emailvalidData = EmailValidForm(email=userInfo.email,valid_code=userInfo.code)
+    #await valid_email(emailvalidData)
     try :
         userInfo.hashed_password = get_password_hash(userInfo.password)
         userInfo.address_id = userInfo.address[1]
