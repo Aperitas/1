@@ -26,7 +26,10 @@ async def register_user(userInfo: CreateUser) :
     #await valid_email(emailvalidData)
     try :
         userInfo.hashed_password = get_password_hash(userInfo.password)
-        userInfo.address_id = userInfo.address[1]
+        if userInfo.address and len(userInfo.address) > 1:
+            userInfo.address_id = userInfo.address[1]
+        else:
+             userInfo.address_id = None  # 或 1（默认地址ID）
         userInfo.create_time = datetime.datetime.now()
         # ===== 新增：处理 map_id =====
         if userInfo.map_id is None:

@@ -27,18 +27,16 @@ class UpdateUser(SQLModel) :
     # ===========================================================
 
 
-class CreateUser(UpdateUser,UserIn) :
+class CreateUser(UpdateUser, UserIn):
     password: str
     isActive: bool = False
     nickname: str
-    address: List[int]
+    address: Optional[List[int]] = Field(default=None)  # 改为可选
     email: EmailStr
     create_time: datetime = datetime.now()
     isAdmin: bool = False
-    code: str = Field(max_length=6)
-    # ===== 新增：用户选择的地图ID =====
+    code: Optional[str] = Field(default=None, max_length=6)  # 验证码也改为可选（因为已注释）
     map_id: Optional[int] = Field(default=None, description="用户默认地图ID")
-    # ========================================
 
 
 class OutputUser(UserIn) :
