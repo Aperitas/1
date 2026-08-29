@@ -43,12 +43,19 @@ async def websocket_map(websocket: WebSocket, token: str = None):
         manager.disconnect(user_id, route)
 
 @websocket_api.websocket("/command")
-async def websocket_command(websocket: WebSocket):
+async def websocket_command(websocket: WebSocket, token: str = None):
+    logger.info(f"WebSocket /command 连接尝试，token: {token}")
+    await websocket.accept()
+    logger.info(f"WebSocket /command 连接已接受")
     """车端连接此 WebSocket 接收指令"""
     route = "command"
     car_id = None
 
-    await websocket.accept()
+    try:
+        await websocket.accept()
+    except Exception as e:
+        logger.error(f"WebSocket 连接拒绝: {e}")
+        return
 
     # 等待车端发送注册信息
     try:
