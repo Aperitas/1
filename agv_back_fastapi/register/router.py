@@ -15,6 +15,8 @@ from apis.admin.waypoints import router as waypoints_router
 from apis.admin.paths import router as paths_router
 from apis.client.report import router as report_router
 from apis.admin.maps import router as maps_router
+from apis.websocket.process import websocket_api
+
 def register_router(app: FastAPI):
     """ 注册路由 """
 
