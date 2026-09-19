@@ -3,7 +3,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 from enum import Enum
-
+from schemas.car_command import CarCommandIn, ControlModeIn
 import cv2
 import numpy as np
 from fastapi import APIRouter, Request, UploadFile, Depends
@@ -55,11 +55,13 @@ async def get_car_list(user: Users = Depends(get_current_user)):
                 "car_id": car.id,
                 "name": car.name,
                 "status": car.status,
+                "control_mode": car.control_mode,
                 "yaw": car.yaw,
                 "speed": car.speed,
                 "lon": car.lon,
                 "lat": car.lat,
                 "battery": car.battery,
+
             }
             result.append(item)
     return resp_200(data=result)
@@ -164,3 +166,56 @@ async def send_command(
 
     else:
         return resp_400(msg=f"不支持的指令: {data.command}")
+
+@car_api.post("/{car_id}/control_mode", summary="切换小车控制模式")
+async def switch_control_mode(
+        car_id: int,
+        data: ControlModeIn,
+        user: Users = Depends(get_current_user),
+        session: Session = Depends(get_session)
+):
+    """
+    切换小车控制模式：
+    - AUTO: 自动模式（由调度系统控制）
+    - MANUAL: 手动模式（人工控制）
+
+    限制：小车正在执行任务（WORKING）时不允许切换，需先暂停或停止。
+    """
+    # 1. 仅管理员可操作
+    if not user.isAdmin:
+        return resp_400(msg="权限不足，仅管理员可切换控制模式")
+
+    # 2. 校验小车是否存在
+    car = session.get(Cars, car_id)
+    if not car:
+        return resp_400(msg="小车不存在")
+
+    # 3. 前置条件：正在执行任务时不允许切换
+    if car.status == CarStatus.WORKING:
+        return resp_400(msg="小车正在执行任务，请先暂停或停止后再切换模式")
+
+    # 4. 检查是否与当前模式相同
+    new_mode = data.mode.value
+    if car.control_mode == new_mode:
+        return resp_400(msg=f"小车当前已处于 {new_mode} 模式，无需切换")
+
+    # 5. 更新模式
+    old_mode = car.control_mode
+    car.control_mode = new_mode
+    session.add(car)
+    session.commit()
+    logger.info(f"管理员 {user.name} 将小车 {car_id} 控制模式从 {old_mode} 切换为 {new_mode}")
+
+    # 6. WebSocket 推送给车端
+    ws_msg = {
+        "type": "control_mode",
+        "mode": new_mode,
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+    try:
+        await manager.send_personal_json(ws_msg, car_id, "command")
+        logger.info(f"控制模式变更已推送给车端 {car_id}")
+    except Exception as e:
+        logger.error(f"WebSocket 推送失败: {e}")
+
+    return resp_200(msg=f"控制模式已切换为 {new_mode}", data={"control_mode": new_mode})
