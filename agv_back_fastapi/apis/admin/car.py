@@ -56,11 +56,13 @@ async def get_car_list(user: Users = Depends(get_current_user)):
                 "name": car.name,
                 "status": car.status,
                 "control_mode": car.control_mode,
+                "tracking_path_id": car.tracking_path_id,
                 "yaw": car.yaw,
                 "speed": car.speed,
                 "lon": car.lon,
                 "lat": car.lat,
                 "battery": car.battery,
+
 
             }
             result.append(item)
@@ -178,9 +180,11 @@ async def switch_control_mode(
     切换小车控制模式：
     - AUTO: 自动模式（由调度系统控制）
     - MANUAL: 手动模式（人工控制）
-    - TRACKING：寻迹模式
+    - TRACKING: 寻迹模式
 
-    限制：小车正在执行任务（WORKING）时不允许切换，需先暂停或停止。
+    限制：
+    - 小车正在执行任务（WORKING）时不允许切换，需先暂停或停止。
+    - 切换为 TRACKING 时必须指定 path_id（寻迹的路线）。
     """
     # 1. 仅管理员可操作
     if not user.isAdmin:
@@ -200,14 +204,26 @@ async def switch_control_mode(
     if car.control_mode == new_mode:
         return resp_400(msg=f"小车当前已处于 {new_mode} 模式，无需切换")
 
-    # 5. 更新模式
+    # 5. 如果切到 TRACKING，必须指定寻迹路线
+    if new_mode == "TRACKING":
+        if not data.path_id:
+            return resp_400(msg="寻迹模式需要指定 path_id")
+        path = session.get(Path, data.path_id)
+        if not path:
+            return resp_400(msg="路线不存在")
+        car.tracking_path_id = data.path_id
+    else:
+        # 切到其他模式时清空寻迹路线
+        car.tracking_path_id = None
+
+    # 6. 更新控制模式
     old_mode = car.control_mode
     car.control_mode = new_mode
     session.add(car)
     session.commit()
     logger.info(f"管理员 {user.name} 将小车 {car_id} 控制模式从 {old_mode} 切换为 {new_mode}")
 
-    # 6. WebSocket 推送给车端
+    # 7. WebSocket 推送（只发 mode，不发 path_id；路线数据后续走独立 topic）
     ws_msg = {
         "type": "control_mode",
         "mode": new_mode,
@@ -219,4 +235,11 @@ async def switch_control_mode(
     except Exception as e:
         logger.error(f"WebSocket 推送失败: {e}")
 
-    return resp_200(msg=f"控制模式已切换为 {new_mode}", data={"control_mode": new_mode})
+    # 8. 返回给前端
+    return resp_200(
+        msg=f"控制模式已切换为 {new_mode}",
+        data={
+            "control_mode": new_mode,
+            "tracking_path_id": car.tracking_path_id
+        }
+    )

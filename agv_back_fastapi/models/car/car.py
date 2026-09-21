@@ -33,13 +33,12 @@ class Cars(SQLModel, table=True):
     yaw: Optional[float] = Field(default=0.0, description="航向角 0朝北")
     speed: Optional[float] = Field(default=0.0, description="小车速度 m/s")
 
-    # ========== 新增：真实车物理属性 ==========
     battery: Optional[float] = Field(default=100.0, description="电量百分比 0-100")
     video_streams: Optional[str] = Field(default="{}", description="多角度视频流地址JSON字符串，如 {'front':'rtsp://...'}")
     last_heartbeat: Optional[datetime] = Field(default=None, description="最后一次上报心跳时间")
-    # ===== 新增：控制模式 AUTO / MANUAL =====
-    control_mode: Optional[str] = Field(default="MANUAL", description="控制模式: MANUAL / AUTO / TRACKING")
 
+    control_mode: Optional[str] = Field(default="AUTO", description="控制模式: MANUAL / AUTO / TRACKING")
+    tracking_path_id: Optional[int] = Field(default=None, description="寻迹模式下正在寻迹的路线ID")
 
     tasks: List["Tasks"] = Relationship(back_populates="car")
     devices: List["DeviceTypeLink"] = Relationship(back_populates="car_link")

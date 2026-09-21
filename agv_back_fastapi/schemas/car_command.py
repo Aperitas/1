@@ -16,4 +16,4 @@ class ControlModeEnum(str, Enum):
 
 class ControlModeIn(SQLModel):
     mode: ControlModeEnum  # AUTO / MANUAL
-# ===================================
+    path_id: Optional[int] = None  # 仅当 mode=TRACKING 时必填
