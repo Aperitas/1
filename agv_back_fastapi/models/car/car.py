@@ -38,7 +38,7 @@ class Cars(SQLModel, table=True):
     video_streams: Optional[str] = Field(default="{}", description="多角度视频流地址JSON字符串，如 {'front':'rtsp://...'}")
     last_heartbeat: Optional[datetime] = Field(default=None, description="最后一次上报心跳时间")
     # ===== 新增：控制模式 AUTO / MANUAL =====
-    control_mode: Optional[str] = Field(default="AUTO", description="控制模式: AUTO/MANUAL")
+    control_mode: Optional[str] = Field(default="MANUAL", description="控制模式: MANUAL / AUTO / TRACKING")
 
 
     tasks: List["Tasks"] = Relationship(back_populates="car")

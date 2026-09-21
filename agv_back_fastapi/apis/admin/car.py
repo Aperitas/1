@@ -178,6 +178,7 @@ async def switch_control_mode(
     切换小车控制模式：
     - AUTO: 自动模式（由调度系统控制）
     - MANUAL: 手动模式（人工控制）
+    - TRACKING：寻迹模式
 
     限制：小车正在执行任务（WORKING）时不允许切换，需先暂停或停止。
     """

@@ -11,6 +11,7 @@ class CarCommandIn(SQLModel):
 class ControlModeEnum(str, Enum):
     AUTO = "AUTO"
     MANUAL = "MANUAL"
+    TRACKING = "TRACKING"
 
 
 class ControlModeIn(SQLModel):
