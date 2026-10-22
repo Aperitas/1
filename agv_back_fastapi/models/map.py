@@ -13,6 +13,13 @@ class Map(SQLModel, table=True):
     center_lat: float = Field(default=22.6042, description="地图中心纬度")
     zoom: int = Field(default=17, description="默认缩放级别")
     created_at: datetime = Field(default_factory=datetime.now)
+    # ===== 新增：文件相关字段 =====
+    file_path: Optional[str] = Field(default=None, description="文件存储路径")
+    file_type: Optional[str] = Field(default=None, description="文件类型，如 pcd/zip")
+    file_size: Optional[int] = Field(default=None, description="文件大小（字节）")
+    upload_time: Optional[datetime] = Field(default=None, description="上传时间")
+    # ===============================
+
 
     # 关系
     sites: List["Site"] = Relationship(back_populates="map")
