@@ -13,6 +13,7 @@ from typing import List, Optional
 import os
 import shutil
 from datetime import datetime
+from fastapi.concurrency import run_in_threadpool
 
 router = APIRouter(prefix="/admin/maps", tags=["地图管理"])
 
@@ -58,12 +59,17 @@ async def upload_map_file(
     # 保存文件
     filename = f"map_{map_id}_{file.filename}"
     file_path = os.path.join(MAP_UPLOAD_DIR, filename)
-    try:
+
+    #定义异步保存函数，放入线程池执行，避免阻塞主服务
+    def save_file():
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
+
+    try:
+        await run_in_threadpool(save_file)
     except Exception as e:
         return resp_500(msg=f"文件保存失败：{str(e)}")
-
+    
     # 更新数据库
     map_obj.file_path = file_path
     map_obj.file_type = os.path.splitext(filename)[1].lstrip(".")
@@ -148,6 +154,13 @@ async def delete_map(
     paths = session.exec(select(Path).where(Path.map_id == map_id)).first()
     if sites or waypoints or paths:
         return resp_400(msg="该地图下存在站点、路径点或路线，无法删除")
+    # 删除数据库前，清理磁盘文件
+    if map_obj.file_path and os.path.exists(map_obj.file_path):
+        try:
+            os.remove(map_obj.file_path)
+        except Exception as e:
+            print(f"清理文件失败: {e}")
+    
     session.delete(map_obj)
     session.commit()
     return resp_200(msg="地图已删除")
