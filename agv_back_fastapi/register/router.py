@@ -16,6 +16,7 @@ from apis.admin.paths import router as paths_router
 from apis.client.report import router as report_router
 from apis.admin.maps import router as maps_router
 from apis.websocket.process import websocket_api
+from apis.map import router as map_tile_router
 
 def register_router(app: FastAPI):
     """ 注册路由 """
@@ -33,6 +34,7 @@ def register_router(app: FastAPI):
     app.include_router(waypoints_router)
     app.include_router(paths_router)
     app.include_router(maps_router)
+    app.include_router(map_tile_router)# 挂载地图瓦片代理（不需要鉴权，供前端 img 标签直接访问）
     #
     # app.include_router(dashboard.router, prefix=settings.API_PREFIX, tags=["Dashboard"],
     #                    dependencies=[Security(get_current_user, scopes=[])])  # Dashboard(不需要权限,但需要登录)

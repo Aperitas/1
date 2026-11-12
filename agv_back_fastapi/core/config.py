@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     LOGGER_LEVEL: str = 'DEBUG'  # 日志等级: ['DEBUG' | 'INFO']
     LOGGER_ROTATION: str = "12:00"  # 日志分片: 按 时间段/文件大小 切分日志. 例如 ["500 MB" | "12:00" | "1 week"]
     LOGGER_RETENTION: str = "7 days"  # 日志保留的时间: 超出将删除最早的日志. 例如 ["1 days"]
+        
+    TIANDITU_KEY: str = "c6fbb80be2f3c2677985f6d44683437d"  # 天地图服务器端 Key
 
 
     class Config:
