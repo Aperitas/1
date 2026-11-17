@@ -6,7 +6,10 @@ from core.config import settings
 
 router = APIRouter(prefix="/api/map", tags=["地图瓦片代理"])
 
-LAYERS = {"vec": "vec_w", "cva": "cva_w"}
+LAYERS = {
+    "vec": "vec_w", "cva": "cva_w",
+    "img": "img_w", "cia": "cia_w"
+}
 SUBDOMAINS = [f"t{i}" for i in range(8)]
 
 # 全局客户端，复用连接池
