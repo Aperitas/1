@@ -91,6 +91,57 @@ async def create_car(
         logger.error(f"创建小车失败: {e}")
         return resp_500(msg=f"创建小车失败: {str(e)}")
 
+# 放在 CarCreateIn 的下面
+class CarUpdateIn(BaseModel):
+    name: Optional[str] = None
+    productor: Optional[str] = None
+    weight: Optional[float] = None
+    ip: Optional[str] = None
+    port: Optional[str] = None
+    status: Optional[int] = None  # 允许管理员手动改状态
+    description: Optional[str] = None
+
+@car_api.put("/{car_id}/update", summary="修改小车信息")
+async def update_car(
+    car_id: int,
+    data: CarUpdateIn,
+    session: Session = Depends(get_session),
+    user: Users = Depends(get_current_user)
+):
+    """
+    修改指定小车的信息。只需传需要修改的字段，未传的字段保持原样。
+    """
+    if not user.isAdmin:
+        return resp_400(msg="权限不足，仅管理员可操作")
+    
+    car = session.get(Cars, car_id)
+    if not car:
+        return resp_400(msg="小车不存在")
+        
+    try:
+        # 遍历传入的字段并更新
+        update_data = data.dict(exclude_unset=True)
+        for key, value in update_data.items():
+            # 如果传了 status，需要转成枚举类型
+            if key == "status":
+                try:
+                    car.status = CarStatus(value)
+                except ValueError:
+                    return resp_400(msg=f"无效的小车状态值: {value}")
+            else:
+                setattr(car, key, value)
+                
+        session.add(car)
+        session.commit()
+        session.refresh(car)
+        
+        logger.info(f"管理员 {user.name} 修改了小车 {car_id} 的信息")
+        return resp_200(msg="小车信息修改成功", data=car.dict())
+    except Exception as e:
+        session.rollback()
+        logger.error(f"修改小车信息失败: {e}")
+        return resp_500(msg=f"修改失败: {str(e)}")
+
 @car_api.get("/list", summary="获取所有小车完整信息，包含地图GPS经纬度")
 async def get_car_list(user: Users = Depends(get_current_user)):
     """
