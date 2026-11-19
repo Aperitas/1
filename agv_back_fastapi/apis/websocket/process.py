@@ -3,25 +3,13 @@ author:dlr123
 date:2022年06月14日
 """
 import json
-import os
-import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from sqlmodel import select
-from fastapi.encoders import jsonable_encoder
 from core.logger import logger
-from core.security import check_jwt_token
-from db.session import get_session
-from models.item.items import Items
-from schemas import TokenInfo
-from schemas.items import OutputItems
-from utils.custom_exc import PermissionNotEnough
 from .common import ConnectionManager
-import websockets
 
 websocket_api = APIRouter(prefix='/ws')
 manager = ConnectionManager()
-dir_path = os.path.join(os.getcwd(), 'apis/websocket/data')
 
 
 @websocket_api.websocket("/map")

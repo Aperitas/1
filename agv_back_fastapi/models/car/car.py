@@ -41,4 +41,3 @@ class Cars(SQLModel, table=True):
     tracking_path_id: Optional[int] = Field(default=None, description="寻迹模式下正在寻迹的路线ID")
 
     tasks: List["Tasks"] = Relationship(back_populates="car")
-    devices: List["DeviceTypeLink"] = Relationship(back_populates="car_link")

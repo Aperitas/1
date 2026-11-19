@@ -1,47 +1,21 @@
 import datetime
-import uuid
-from pathlib import Path
 from typing import Optional
-from enum import Enum
 from schemas.car_command import CarCommandIn, ControlModeIn
-import cv2
-import numpy as np
-from fastapi import APIRouter, Request, UploadFile, Depends
-from starlette.responses import StreamingResponse
-from sqlmodel import Session, select
+from fastapi import APIRouter, Depends
+from sqlmodel import Session
 
-from core.config import settings
 from core.logger import logger
 from core.security import get_current_user
-from crud.items import itemCrud
 from db.session import get_session
 from models.car.car import Cars, CarStatus
-from models.car.tasks import Tasks, TaskStatus
-from models.item.items import Items, UserOrder, OrderStatus
-from models.item.links import ItemProcessLink
 from models.path import Path
 from models.user.users import Users
-from schemas.items import QueryInItems, OutputItems, SearchItems
-from schemas.position import CarUploadMsg
-from schemas.car_command import CarCommandIn
 from utils.resp_code import resp_200, resp_500, resp_400
-from utils import detect_surface
 from apis.websocket.process import manager
 from pydantic import BaseModel
-from typing import Optional
 
 car_api = APIRouter(prefix='/cars')
 
-
-async def gen_frames(frame):
-    ret, buffer = cv2.imencode('.jpg', frame)
-    frame = buffer.tobytes()
-    yield (b'--frame\r\n'
-           b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-
-
-# 全局内存缓存，存放实时小车位置（仅供临时测试用）
-car_position_cache = {}
 
 # ===== 定义接收前端传来的小车数据结构 =====
 class CarCreateIn(BaseModel):

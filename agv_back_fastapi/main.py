@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from core import settings
 #from core import FastAPiNode
 from core.logger import logger
-from db import init_db,init_data
+from db import init_db
 from register import register_mount,register_exception,register_cors,register_middleware,register_router,register_timer
 from sqlmodel.sql.expression import Select,SelectOfScalar
 #import rospy

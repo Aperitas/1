@@ -26,7 +26,6 @@ def register_router(app: FastAPI):
     #
     app.include_router(oauth_api, prefix=settings.API_PREFIX, tags=["Oauth"])  # Login(权限在每个接口上)
     app.include_router(commons_api, prefix=settings.API_PREFIX, tags=["Common"])  # Login(权限在每个接口上)
-    app.include_router(client_api,prefix=settings.API_PREFIX,tags=['Client'])
     app.include_router(report_router)  # 车端上报接口
     app.include_router(admin_api,prefix=settings.API_PREFIX,tags=['Admin'])
     app.include_router(websocket_api,tags=['Websocket'])

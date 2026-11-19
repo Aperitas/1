@@ -21,7 +21,6 @@ class UpdateUser(SQLModel) :
     last_active_time: Optional[datetime] = None
     phone: Optional[int] = Field(default=None)
     nickname: Optional[str] = None
-    address_id: Optional[int] = None
     # ===== 新增：用户默认地图ID（管理员更新用户时可修改） =====
     map_id: Optional[int] = Field(default=None, description="用户默认地图ID")
     # ===========================================================
@@ -31,7 +30,6 @@ class CreateUser(UpdateUser, UserIn):
     password: str
     isActive: bool = False
     nickname: str
-    address: Optional[List[int]] = Field(default=None)  # 改为可选
     email: EmailStr
     create_time: datetime = datetime.now()
     isAdmin: bool = False
@@ -44,8 +42,6 @@ class OutputUser(UserIn) :
     email: Optional[EmailStr] = Field(default=None,description="用户邮箱")
     roles: Optional[List[str]] = None
     phone: Optional[int] = Field(default=None)
-    address_id: Optional[int] = None
-    # address: Optional[str] = None
     nickname: str
     create_time: datetime
     last_active_time: Optional[datetime] = None
@@ -64,7 +60,6 @@ class UserUpdate(BaseModel):
     phone: Optional[str] = None
     isActive: Optional[bool] = None
     isAdmin: Optional[bool] = None
-    address_id: Optional[int] = None
     # ===== 新增：用户默认地图ID（管理员更新用户时可修改） =====
     map_id: Optional[int] = Field(default=None, description="用户默认地图ID")
     # ===========================================================
