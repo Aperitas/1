@@ -27,6 +27,8 @@ from schemas.car_command import CarCommandIn
 from utils.resp_code import resp_200, resp_500, resp_400
 from utils import detect_surface
 from apis.websocket.process import manager
+from pydantic import BaseModel
+from typing import Optional
 
 car_api = APIRouter(prefix='/cars')
 
@@ -41,6 +43,53 @@ async def gen_frames(frame):
 # 全局内存缓存，存放实时小车位置（仅供临时测试用）
 car_position_cache = {}
 
+# ===== 定义接收前端传来的小车数据结构 =====
+class CarCreateIn(BaseModel):
+    name: str
+    productor: Optional[str] = "未知厂商"
+    weight: Optional[float] = 50.0
+    ip: Optional[str] = "192.168.1.100"
+    port: Optional[str] = "9090"
+
+@car_api.post("/create", summary="新增小车")
+async def create_car(
+    data: CarCreateIn,
+    session: Session = Depends(get_session),
+    user: Users = Depends(get_current_user)
+):
+    """
+    在系统中新增一台小车。如果新增成功，返回自动生成的 car_id。
+    """
+    if not user.isAdmin:
+        return resp_400(msg="权限不足，仅管理员可操作")
+    
+    try:
+        # 创建新小车，所有轨迹数据默认给 0 或 100
+        new_car = Cars(
+            name=data.name,
+            productor=data.productor,
+            weight=data.weight,
+            ip=data.ip,
+            port=data.port,
+            status=CarStatus.FREE,      # 默认状态为空闲
+            lon=113.9686,               # 默认南科大经纬度
+            lat=22.6042,
+            yaw=0.0,
+            speed=0.0,
+            battery=100.0,
+            video_streams="{}",
+            control_mode="AUTO"         # 默认自动模式
+        )
+        session.add(new_car)
+        session.commit()
+        session.refresh(new_car)
+        
+        logger.info(f"管理员 {user.name} 新增了一台小车: {data.name} (ID: {new_car.id})")
+        return resp_200(msg="小车创建成功", data={"car_id": new_car.id})
+    except Exception as e:
+        session.rollback()
+        logger.error(f"创建小车失败: {e}")
+        return resp_500(msg=f"创建小车失败: {str(e)}")
 
 @car_api.get("/list", summary="获取所有小车完整信息，包含地图GPS经纬度")
 async def get_car_list(user: Users = Depends(get_current_user)):
