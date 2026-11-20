@@ -14,8 +14,9 @@ from schemas.user import CreateUser
 from utils.resp_code import resp_400,resp_500,resp_200
 
 
-@oauth_api.post('/register')
+@oauth_api.post('/register', summary="用户注册")
 async def register_user(userInfo: CreateUser) :
+    """注册新用户：校验用户名/邮箱唯一，密码加密后入库，默认绑定地图 1。"""
     user_name = userCrud.get_by_name(userInfo.name)
     if user_name != None :
         return resp_400(msg="用户名已经存在，请更换用户名")

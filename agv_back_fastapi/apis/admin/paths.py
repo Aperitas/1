@@ -51,6 +51,7 @@ async def list_paths(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
+    """获取路线列表，可按路线类型、所属小车、所属地图筛选。"""
     query = select(Path)
     if path_type:
         query = query.where(Path.path_type == path_type)
@@ -72,6 +73,7 @@ async def get_path(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
+    """按 id 获取单条路线详情，node_chain 已转成对象返回。"""
     path = session.get(Path, path_id)
     if not path:
         return resp_400(msg="路线不存在")
@@ -86,6 +88,7 @@ async def update_path(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
+    """管理员修改路线（名称、类型、节点序列等），node_chain 以 JSON 字符串入库。"""
     if not user.isAdmin:
         return resp_400(msg="仅管理员可操作")
     path = session.get(Path, path_id)
@@ -109,6 +112,7 @@ async def delete_path(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
+    """管理员删除路线。"""
     if not user.isAdmin:
         return resp_400(msg="仅管理员可操作")
     path = session.get(Path, path_id)

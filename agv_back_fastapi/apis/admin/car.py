@@ -2,12 +2,13 @@ import datetime
 from typing import Optional
 from schemas.car_command import CarCommandIn, ControlModeIn
 from fastapi import APIRouter, Depends
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from core.logger import logger
 from core.security import get_current_user
 from db.session import get_session
 from models.car.car import Cars, CarStatus
+from models.car.tasks import Tasks
 from models.path import Path
 from models.user.users import Users
 from utils.resp_code import resp_200, resp_500, resp_400
@@ -141,6 +142,57 @@ async def get_car_list(user: Users = Depends(get_current_user)):
             }
             result.append(item)
     return resp_200(data=result)
+
+
+@car_api.delete("/{car_id}", summary="删除小车")
+async def delete_car(
+    car_id: int,
+    session: Session = Depends(get_session),
+    user: Users = Depends(get_current_user)
+):
+    """
+    删除指定小车（仅管理员）：
+    - 小车正在执行任务(WORKING)时不允许删除，需先停止；
+    - 若仍有路线专属于该车，禁止删除，需先删除或解除这些路线；
+    - 删除前把历史任务的 car_id 置空，避免外键悬挂；
+    - 同步清理该车在 WebSocket 指令通道中的连接记录。
+    """
+    if not user.isAdmin:
+        return resp_400(msg="权限不足，仅管理员可删除小车")
+
+    car = session.get(Cars, car_id)
+    if not car:
+        return resp_400(msg="小车不存在")
+
+    # 1. 正在执行任务的小车禁止删除
+    if car.status == CarStatus.WORKING:
+        return resp_400(msg="小车正在执行任务，请先停止后再删除")
+
+    # 2. 仍被路线引用时禁止删除（paths.car_id 为外键）
+    related_paths = session.exec(select(Path).where(Path.car_id == car_id)).all()
+    if related_paths:
+        return resp_400(msg=f"该小车仍被 {len(related_paths)} 条路线引用，请先删除或解除这些路线")
+
+    car_name = car.name
+    try:
+        # 3. 解除历史任务与小车的外键关联
+        related_tasks = session.exec(select(Tasks).where(Tasks.car_id == car_id)).all()
+        for task in related_tasks:
+            task.car_id = None
+            session.add(task)
+
+        session.delete(car)
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        logger.error(f"删除小车失败: {e}")
+        return resp_500(msg=f"删除小车失败: {str(e)}")
+
+    # 4. 清理 WebSocket 指令通道中该车的连接记录
+    manager.active_connections["command"].pop(car_id, None)
+
+    logger.info(f"管理员 {user.name} 删除了小车: {car_name} (ID: {car_id})")
+    return resp_200(msg="小车已删除", data={"car_id": car_id})
 
 
 @car_api.post("/{car_id}/command", summary="下发指令给小车")

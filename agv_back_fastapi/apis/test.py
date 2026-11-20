@@ -20,8 +20,9 @@ from utils.resp_code import resp_200,resp_500
 test_api = APIRouter(tags=['test'])
 
 
-@test_api.post('/')
+@test_api.post('/', summary="测试接口：校验用户名并返回 token")
 async def hello_world(userin: UserIn) :
+    """开发调试用：用固定密码 123456 校验用户是否存在，成功则返回 token。"""
     usercrud = UserCrud()
     result = usercrud.authenticate(userin.name,'123456')
     if result :
@@ -31,8 +32,9 @@ async def hello_world(userin: UserIn) :
         raise UserNotExist(err_desc=f"{userin.name}不存在")
 
 
-@test_api.get('/user')
+@test_api.get('/user', summary="测试接口：获取当前登录用户信息")
 async def get_user_info(user: Users = Depends(get_current_user)) :
+    """开发调试用：返回当前 token 对应用户的基本信息。"""
     return resp_200(data=OutputUser.from_orm(user))
 
 

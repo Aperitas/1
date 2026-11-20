@@ -17,6 +17,7 @@ client = httpx.AsyncClient(timeout=10.0)
 
 @router.get("/tiles/{layer}/{z}/{x}/{y}.png", summary="天地图瓦片代理")
 async def map_tile(layer: str, z: int, x: int, y: int) -> Response:
+    """天地图瓦片代理：由服务端携带 Key 向上游请求瓦片并缓存 7 天，前端无需暴露 Key。"""
     upstream_layer = LAYERS.get(layer)
     # 限制只允许 vec 和 cva 图层，且 z 范围 1-18
     if upstream_layer is None or not 1 <= z <= 18:

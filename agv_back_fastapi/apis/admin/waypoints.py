@@ -17,6 +17,7 @@ async def create_waypoint(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
+    """管理员新增路径点（地图上标定的坐标点）。"""
     if not user.isAdmin:
         return resp_400(msg="仅管理员可操作")
     try:
@@ -35,6 +36,7 @@ async def list_waypoints(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
+    """获取路径点列表，可按 map_id 过滤。"""
     query = select(Waypoint)
     if map_id is not None:
         query = query.where(Waypoint.map_id == map_id)
@@ -47,6 +49,7 @@ async def get_waypoint(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
+    """按 id 获取单个路径点详情。"""
     wp = session.get(Waypoint, wp_id)
     if not wp:
         return resp_400(msg="路径点不存在")
@@ -59,6 +62,7 @@ async def update_waypoint(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
+    """管理员修改路径点信息，仅更新传入的字段。"""
     if not user.isAdmin:
         return resp_400(msg="仅管理员可操作")
     wp = session.get(Waypoint, wp_id)
@@ -77,6 +81,7 @@ async def delete_waypoint(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
+    """管理员删除路径点。"""
     if not user.isAdmin:
         return resp_400(msg="仅管理员可操作")
     wp = session.get(Waypoint, wp_id)

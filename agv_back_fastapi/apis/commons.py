@@ -15,8 +15,9 @@ from utils.custom_exc import UserNotExist,PermissionNotEnough
 commons_api = APIRouter(prefix="/commons")
 
 
-@commons_api.get('/userinfo')
+@commons_api.get('/userinfo', summary="获取用户信息（可查询指定用户）")
 async def get_user_info(user: Users = Depends(get_current_user),user_id:Optional[int]=None) :
+    """不传 user_id 返回登录者自身信息；传 user_id 时仅管理员可查询他人信息。"""
     target_user = None
     if user_id is not None:
         if user.isAdmin:

@@ -10,9 +10,9 @@ from apis.websocket.process import manager
 
 router = APIRouter(prefix="/report", tags=["车端上报"])
 
-@router.post("/car_status")
+@router.post("/car_status", summary="车端状态上报")
 async def car_status_report(data: CarReportIn, session: Session = Depends(get_session)):
-    """车端上报经纬度、电量、速度、视频地址"""
+    """车端上报经纬度、电量、速度、视频地址，更新后通过 WebSocket 广播给前端地图页面。"""
     car = session.get(Cars, data.car_id)
     if not car:
         return resp_400(msg="小车ID不存在")

@@ -28,6 +28,7 @@ async def create_map(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
+    """管理员新增地图（名称、中心经纬度、默认缩放级别等）。"""
     if not user.isAdmin:
         return resp_400(msg="仅管理员可操作")
     try:
@@ -95,6 +96,7 @@ async def list_maps(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
+    """获取所有地图列表，附带可直接访问的点云文件 URL。"""
     maps = session.exec(select(Map)).all()
     result = []
     for m in maps:
@@ -110,6 +112,7 @@ async def get_map(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
+    """按 id 获取单个地图详情，附带点云文件 URL。"""
     map_obj = session.get(Map, map_id)
     if not map_obj:
         return resp_400(msg="地图不存在")
@@ -125,6 +128,7 @@ async def update_map(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
+    """管理员修改地图信息，仅更新传入的字段。"""
     if not user.isAdmin:
         return resp_400(msg="仅管理员可操作")
     map_obj = session.get(Map, map_id)
@@ -144,6 +148,7 @@ async def delete_map(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
+    """管理员删除地图：地图下仍有站点/路径点/路线时禁止删除，删除成功同时清理磁盘文件。"""
     if not user.isAdmin:
         return resp_400(msg="仅管理员可操作")
     map_obj = session.get(Map, map_id)

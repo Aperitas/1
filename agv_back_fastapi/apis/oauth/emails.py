@@ -79,12 +79,13 @@ async def valid_email(validData: EmailValidForm) :
     return email
 
 
-@oauth_api.get("/getcode/{path}")
+@oauth_api.get("/getcode/{path}", summary="获取邮箱验证码（注册/找回密码）")
 async def send_in_background(
         background_tasks: BackgroundTasks,
         email: EmailStr,
         path: GetCodePath
 ) :
+    """向指定邮箱发送 6 位验证码；path=register 校验邮箱未被注册，path=forget 校验邮箱已注册。"""
     user = userCrud.get_by_email(email)
     if path == GetCodePath.register :
         if user != None :
@@ -124,8 +125,9 @@ async def send_in_background(
     return resp_200(msg="邮箱发送成功")
 
 
-@oauth_api.post("/forget")
-async def send_in_background(*,email: EmailStr = Depends(valid_email),new_password: NewPassword) :
+@oauth_api.post("/forget", summary="通过邮箱验证码重置密码")
+async def reset_password_by_email(*,email: EmailStr = Depends(valid_email),new_password: NewPassword) :
+    """校验邮箱验证码通过后，用新密码更新该用户密码。"""
     session = get_session()
     try :
         sql = update(Users).where(Users.email == email).values({

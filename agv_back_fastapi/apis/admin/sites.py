@@ -39,6 +39,7 @@ async def list_sites(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
+    """获取站点列表，可按 map_id 过滤。"""
     query = select(Site)
     if map_id is not None:
         query = query.where(Site.map_id == map_id)
@@ -51,6 +52,7 @@ async def get_site(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
+    """按 id 获取单个站点详情。"""
     site = session.get(Site, site_id)
     if not site:
         return resp_400(msg="站点不存在")
@@ -63,6 +65,7 @@ async def update_site(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
+    """管理员修改站点信息，仅更新传入的字段。"""
     if not user.isAdmin:
         return resp_400(msg="仅管理员可操作")
     site = session.get(Site, site_id)
@@ -81,6 +84,7 @@ async def delete_site(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
+    """管理员删除站点。"""
     if not user.isAdmin:
         return resp_400(msg="仅管理员可操作")
     site = session.get(Site, site_id)

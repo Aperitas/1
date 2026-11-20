@@ -13,8 +13,9 @@ from utils.resp_code import resp_200,resp_500,resp_400
 
 user_api = APIRouter(prefix='/user')
 
-@user_api.get('/getuserlist')
+@user_api.get('/getuserlist', summary="获取用户列表（不含超级管理员）")
 async def get_user_list(user: Users = Depends(get_current_user)):
+    """仅管理员可调用，返回除 id=1（超级管理员）外所有用户的 id 与用户名。"""
     if user.isAdmin:
         with get_session() as session:
             try:
@@ -37,6 +38,7 @@ async def update_target_user(
         user_id: int = Path(..., description="待修改用户ID"),
         login_user: Users = Depends(get_current_user)
 ):
+    """管理员修改指定用户信息，仅更新前端传入的字段。"""
     # 和上方列表接口保持一致权限判断
     if not login_user.isAdmin:
         raise PermissionError("无权限修改用户信息")
@@ -66,6 +68,7 @@ async def delete_target_user(
         user_id: int = Path(..., description="待删除用户ID"),
         login_user: Users = Depends(get_current_user)
 ):
+    """管理员删除指定用户账号，禁止删除当前登录的管理员自己。"""
     # 管理员权限校验
     if not login_user.isAdmin:
         raise PermissionError("无权限删除用户账号")

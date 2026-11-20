@@ -39,8 +39,9 @@ async def login_access_token(
     # return {"access_token": token, "token_type": "bearer"}
 
 
-@oauth_api.post('/logout')
+@oauth_api.post('/logout', summary="退出登录")
 async def user_logout(user: Users = Depends(get_current_user)) :
+    """退出登录：把当前用户置为离线状态并记录最后活跃时间。"""
     try :
         update_data = UpdateUser(isActive=False,last_active_time=datetime.datetime.now())
         userCrud.update(user.name,update_data.dict(exclude_none=True))
