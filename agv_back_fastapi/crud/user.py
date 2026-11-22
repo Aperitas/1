@@ -2,6 +2,7 @@
 author:dlr123
 date:2022年05月31日
 """
+import uuid
 from typing import Optional
 
 from sqlmodel import select,Session
@@ -69,15 +70,16 @@ def get_user_conflict(name: Optional[str] = None,email: Optional[str] = None,
 
 
 def create_user(payload: CreateUser) -> dict :
-    """ 创建用户：role 与 isAdmin 自动同步、默认绑定地图 1，返回 {id, name, role} """
+    """ 创建用户：role 与 isAdmin 自动同步、默认绑定地图 1，返回 {id, name, role}
+        说明：邮箱/手机号暂不对外使用，users.email 列非空 → 自动填充占位邮箱 """
     role = payload.role.value if isinstance(payload.role,UserRole) else (payload.role or UserRole.GUEST.value)
+    nickname = payload.nickname or payload.name
     with get_session() as session :
         user = Users(
             name=payload.name,
             hashed_password=payload.hashed_password or "",
-            nickname=payload.nickname,
-            email=payload.email,
-            phone=payload.phone,
+            nickname=nickname,
+            email=f"user.{uuid.uuid4().hex[:12]}@example.com",
             isActive=payload.isActive,
             create_time=payload.create_time,
             map_id=payload.map_id or 1,

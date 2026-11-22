@@ -29,6 +29,8 @@ class Users(SQLModel,table=True) :
     role: str = Field(default=UserRole.GUEST.value,index=True,description="角色: admin/dispatcher/guest")
     avatar: Optional[str] = Field(default=None,description="头像URL")
     nickname: str
+    # 说明：email / phone 暂不对外使用（接口层已移除），但保留数据库字段，
+    #      以便以后启用邮箱验证/手机号功能；建号时后端会自动填充占位邮箱。
     email: EmailStr = Field(index=True)
     phone: Optional[int] = Field(default=None)
     address_id: Optional[int] = Field(default=None, description="保留字段,历史地址ID(已解除外键)")

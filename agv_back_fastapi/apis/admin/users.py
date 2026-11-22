@@ -6,7 +6,7 @@ import datetime
 
 from fastapi import APIRouter,Depends
 from fastapi import Path
-from schemas.user import CreateUser, UserUpdate
+from schemas.user import AdminResetPasswordIn, CreateUser, UserUpdate
 from core.logger import logger
 from core.security import get_current_admin, get_password_hash
 from crud.user import create_user, get_user_conflict
@@ -23,7 +23,8 @@ async def get_user_list(user: Users = Depends(get_current_admin)):
     with get_session() as session:
         try:
             all_user:list[Users] = session.query(Users).filter(Users.id != 1).all()
-            res_data = [{'id':u.id,'name':u.name,'role':u.effective_role} for u in all_user]
+            res_data = [{'id':u.id,'name':u.name,'nickname':u.nickname,
+                         'avatar':u.avatar,'role':u.effective_role} for u in all_user]
             return resp_200(data=res_data,msg='获取用户名列表成功')
         except Exception as e:
             logger.error(f'获取用户名列表失败错误,因为：{e}')
@@ -33,7 +34,7 @@ async def get_user_list(user: Users = Depends(get_current_admin)):
 @user_api.post('/create', summary="管理员创建新用户")
 async def create_new_user(userInfo: CreateUser,login_user: Users = Depends(get_current_admin)):
     """仅管理员可创建用户；role 决定角色(admin/dispatcher/guest)，isAdmin 由 role 自动同步。"""
-    conflict = get_user_conflict(name=userInfo.name,email=userInfo.email)
+    conflict = get_user_conflict(name=userInfo.name)
     if conflict != None:
         return resp_400(msg=conflict)
     try:
@@ -79,10 +80,9 @@ async def update_target_user(
                 target_user.role = new_role
                 target_user.isAdmin = (new_role == UserRole.ADMIN.value)
 
-            # 用户名/邮箱修改需要查重
-            if "name" in update_dict or "email" in update_dict:
+            # 用户名修改需要查重
+            if "name" in update_dict:
                 conflict = get_user_conflict(name=update_dict.get("name"),
-                                             email=update_dict.get("email"),
                                              exclude_id=target_user.id)
                 if conflict != None:
                     return resp_400(msg=conflict)
@@ -119,3 +119,29 @@ async def delete_target_user(
         except Exception as e:
             logger.error(f"删除用户失败，错误：{e}")
             return resp_500(msg="数据库操作异常，删除失败")
+
+
+# ------------------新增：管理员重置用户密码 PUT ------------------
+@user_api.put("/{user_id}/password", summary="管理员重置指定用户密码")
+async def reset_target_user_password(
+        data: AdminResetPasswordIn,
+        user_id: int = Path(..., description="目标用户ID"),
+        login_user: Users = Depends(get_current_admin)
+):
+    """管理员直接重置某个用户的密码（无需旧密码），用于用户忘记密码的场景。"""
+    with get_session() as session:
+        try:
+            target_user = session.query(Users).filter(Users.id == user_id).first()
+            if not target_user:
+                return resp_400(msg="目标用户不存在")
+
+            target_user.hashed_password = get_password_hash(data.new_password)
+            session.add(target_user)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"重置用户密码失败，错误：{e}")
+            return resp_500(msg="数据库操作异常，重置失败")
+
+    logger.info(f"管理员 {login_user.name} 重置了用户 {user_id} 的密码")
+    return resp_200(msg="密码重置成功")

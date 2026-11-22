@@ -45,9 +45,8 @@ async def update_my_profile(data: ProfileUpdateIn,user: Users = Depends(get_curr
     if not update_data :
         return resp_400(msg="没有需要修改的字段")
 
-    # 用户名/邮箱唯一性校验（排除自己）
+    # 用户名唯一性校验（排除自己）
     conflict = get_user_conflict(name=update_data.get("name"),
-                                 email=update_data.get("email"),
                                  exclude_id=user.id)
     if conflict :
         return resp_400(msg=conflict)

@@ -24,8 +24,7 @@ def init_user():
                                   isAdmin=True,
                                   role=UserRole.ADMIN.value,
                                   nickname='admin',
-                                  email='965794928@qq.com',
-                                  phone='18978911249')
+                                  email='admin@example.com')
                 session.add(adminInfo)
                 session.commit()
         except Exception as e:

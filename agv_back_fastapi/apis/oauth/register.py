@@ -18,7 +18,7 @@ from utils.resp_code import resp_400,resp_500,resp_200
 @oauth_api.post('/register', summary="创建用户（仅管理员）")
 async def register_user(userInfo: CreateUser,admin: Users = Depends(get_current_admin)) :
     """仅管理员可创建用户：role 决定角色(admin/dispatcher/guest)，isAdmin 由 role 自动同步。"""
-    conflict = get_user_conflict(name=userInfo.name,email=userInfo.email)
+    conflict = get_user_conflict(name=userInfo.name)
     if conflict != None :
         return resp_400(msg=conflict)
     try :
