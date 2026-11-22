@@ -16,6 +16,9 @@ class Path(SQLModel, table=True):
     # 可选：关联小车
     car_id: Optional[int] = Field(default=None, foreign_key="cars.id", description="若指定，则此路线专属于某辆车")
 
+    # 是否临时路径（属性/功能与普通路径完全一致，仅用于前端分组与筛选）
+    is_temp: bool = Field(default=False, index=True, description="是否临时路径")
+
     created_at: Optional[datetime] = Field(default_factory=datetime.now)
     map_id: Optional[int] = Field(default=None, foreign_key="maps.id")
     map: Optional["Map"] = Relationship(back_populates="paths")

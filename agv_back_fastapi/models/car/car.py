@@ -7,6 +7,8 @@ from typing import Optional, List
 from sqlmodel import SQLModel, Field, Relationship
 from datetime import datetime
 
+from models.car.map_link import CarMapLink
+
 class CarStatus(int, Enum):
     INACTIVATE = 0  # 关机或者ros系统没有开启时表示为关机状态
     FREE = 1        # ros系统开启时，但没有分配任务，表示为空闲状态
@@ -41,3 +43,6 @@ class Cars(SQLModel, table=True):
     tracking_path_id: Optional[int] = Field(default=None, description="寻迹模式下正在寻迹的路线ID")
 
     tasks: List["Tasks"] = Relationship(back_populates="car")
+    # ===== 车辆所属地图（多对多） =====
+    maps: List["Map"] = Relationship(back_populates="cars", link_model=CarMapLink)
+    # ==================================

@@ -8,6 +8,7 @@ class SiteCreate(SQLModel):
     lon: float
     lat: float
     dwell_time: Optional[int] = 0
+    stop_mode: str = "timed"  # timed=等一段时间自动走, wait_command=车端发命令才走
     description: Optional[str] = None
     map_id: int
 
@@ -16,6 +17,7 @@ class SiteUpdate(SQLModel):
     lon: Optional[float] = None
     lat: Optional[float] = None
     dwell_time: Optional[int] = None
+    stop_mode: Optional[str] = None
     description: Optional[str] = None
     map_id: Optional[int] = None
 
@@ -25,6 +27,7 @@ class SiteOut(SQLModel):
     lon: float
     lat: float
     dwell_time: int
+    stop_mode: str
     description: Optional[str]
     map_id: int
     created_at: datetime
@@ -60,6 +63,7 @@ class PathCreate(SQLModel):
     node_chain: List[Dict[str, Any]]  # [{"type":"site","id":1}, ...]
     car_id: Optional[int] = None
     map_id: int  # 必须指定所属地图
+    is_temp: bool = False  # 是否临时路径
 
 class PathUpdate(SQLModel):
     name: Optional[str] = None
@@ -67,6 +71,7 @@ class PathUpdate(SQLModel):
     node_chain: Optional[List[Dict[str, Any]]] = None
     car_id: Optional[int] = None
     map_id: Optional[int] = None
+    is_temp: Optional[bool] = None
 
 class PathOut(SQLModel):
     id: int
@@ -75,4 +80,5 @@ class PathOut(SQLModel):
     node_chain: List[Dict[str, Any]]  # 转为Python对象返回
     car_id: Optional[int]
     map_id: int
+    is_temp: bool
     created_at: datetime

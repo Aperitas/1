@@ -3,9 +3,11 @@ from sqlmodel import Session
 from db.session import get_session
 from models.car import Cars
 from schemas.position import CarReportIn
+from schemas.car_command import SiteDepartIn
 from utils.resp_code import resp_200, resp_400
 from datetime import datetime
 import json
+from core.logger import logger
 from apis.websocket.process import manager
 
 router = APIRouter(prefix="/report", tags=["车端上报"])
@@ -39,3 +41,32 @@ async def car_status_report(data: CarReportIn, session: Session = Depends(get_se
         "status": car.status  # 可选
     })
     return resp_200(msg="状态更新成功")
+
+
+@router.post("/site_depart", summary="车端请求发车（wait_command 站点）")
+async def site_depart(data: SiteDepartIn, session: Session = Depends(get_session)):
+    """车端在 wait_command 模式的站点按键发车：服务端向该车 WS 通道推送 depart 指令。"""
+    car = session.get(Cars, data.car_id)
+    if not car:
+        return resp_400(msg="小车ID不存在")
+
+    ws_msg = {
+        "command": "depart",
+        "site_id": data.site_id,
+        "timestamp": datetime.now().isoformat()
+    }
+    pushed = True
+    try:
+        await manager.send_personal_json(ws_msg, data.car_id, "command")
+    except KeyError:
+        pushed = False
+        logger.warning(f"小车 {data.car_id} 未连接指令通道，发车指令未送达")
+    except Exception as e:
+        pushed = False
+        logger.error(f"推送发车指令失败: {e}")
+
+    logger.info(f"小车 {data.car_id} 在站点 {data.site_id} 请求发车（推送={pushed}）")
+    return resp_200(
+        data={"car_id": data.car_id, "site_id": data.site_id, "pushed": pushed},
+        msg="发车指令已下发" if pushed else "车端未连接指令通道"
+    )

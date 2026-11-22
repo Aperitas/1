@@ -30,6 +30,8 @@ async def create_path(
             name=data.name,
             path_type=data.path_type,
             car_id=data.car_id,
+            map_id=data.map_id,
+            is_temp=data.is_temp,
             node_chain=json.dumps(data.node_chain)   # 记得 import json
         )
         session.add(path)
@@ -48,10 +50,11 @@ async def list_paths(
         path_type: Optional[str] = Query(None, description="路线类型: 吸附道路/贝塞尔曲线/折线"),
         car_id: Optional[int] = Query(None, description="关联小车ID"),
         map_id: Optional[int] = Query(None, description="按地图ID筛选"),
+        is_temp: Optional[bool] = Query(None, description="是否临时路径"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
-    """获取路线列表，可按路线类型、所属小车、所属地图筛选。"""
+    """获取路线列表，可按路线类型、所属小车、所属地图、是否临时路径筛选。"""
     query = select(Path)
     if path_type:
         query = query.where(Path.path_type == path_type)
@@ -59,6 +62,8 @@ async def list_paths(
         query = query.where(Path.car_id == car_id)
     if map_id is not None:
         query = query.where(Path.map_id == map_id)
+    if is_temp is not None:
+        query = query.where(Path.is_temp == is_temp)
     paths = session.exec(query).all()
     result = []
     for p in paths:

@@ -5,6 +5,8 @@ from models.map import Map
 from models.site import Site
 from models.waypoint import Waypoint
 from models.path import Path
+from models.car.car import Cars
+from models.car.map_link import CarMapLink
 from schemas.map import MapCreate, MapUpdate, MapOut
 from utils.resp_code import resp_200, resp_400, resp_500
 from core.security import get_current_user
@@ -96,12 +98,19 @@ async def list_maps(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
-    """获取所有地图列表，附带可直接访问的点云文件 URL。"""
+    """获取所有地图列表，附带可直接访问的点云文件 URL 以及关联车辆。"""
     maps = session.exec(select(Map)).all()
+    links = session.exec(select(CarMapLink)).all()
+    car_ids_by_map = {}
+    for link in links:
+        car_ids_by_map.setdefault(link.map_id, []).append(link.car_id)
+
     result = []
     for m in maps:
         d = m.dict()
         d["file_url"] = f"/static/maps/{os.path.basename(m.file_path)}" if m.file_path else None
+        d["car_ids"] = car_ids_by_map.get(m.id, [])
+        d["car_count"] = len(d["car_ids"])
         result.append(d)
     return resp_200(data=result)
 
@@ -112,13 +121,36 @@ async def get_map(
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
-    """按 id 获取单个地图详情，附带点云文件 URL。"""
+    """按 id 获取单个地图详情，附带点云文件 URL 与关联车辆。"""
     map_obj = session.get(Map, map_id)
     if not map_obj:
         return resp_400(msg="地图不存在")
     d = map_obj.dict()
     d["file_url"] = f"/static/maps/{os.path.basename(map_obj.file_path)}" if map_obj.file_path else None
+    d["car_ids"] = [link.car_id for link in session.exec(
+        select(CarMapLink).where(CarMapLink.map_id == map_id)).all()]
+    d["car_count"] = len(d["car_ids"])
     return resp_200(data=d)
+
+
+@router.get("/{map_id}/cars", summary="获取地图包含的车辆")
+async def list_map_cars(
+        map_id: int,
+        session: Session = Depends(get_session),
+        user: Users = Depends(get_current_user)
+):
+    """查看某张地图下关联的所有小车（多对多）。"""
+    map_obj = session.get(Map, map_id)
+    if not map_obj:
+        return resp_400(msg="地图不存在")
+    car_ids = [link.car_id for link in session.exec(
+        select(CarMapLink).where(CarMapLink.map_id == map_id)).all()]
+    cars = session.exec(select(Cars).where(Cars.id.in_(car_ids))).all() if car_ids else []
+    return resp_200(data={
+        "map_id": map_id,
+        "car_ids": car_ids,
+        "cars": [{"id": c.id, "name": c.name, "status": c.status} for c in cars],
+    })
 
 
 @router.put("/{map_id}", summary="修改地图信息")
@@ -159,6 +191,9 @@ async def delete_map(
     paths = session.exec(select(Path).where(Path.map_id == map_id)).first()
     if sites or waypoints or paths:
         return resp_400(msg="该地图下存在站点、路径点或路线，无法删除")
+    # 删除数据库前，先解除车辆与该地图的关联（自动解绑）
+    for link in session.exec(select(CarMapLink).where(CarMapLink.map_id == map_id)).all():
+        session.delete(link)
     # 删除数据库前，清理磁盘文件
     if map_obj.file_path and os.path.exists(map_obj.file_path):
         try:

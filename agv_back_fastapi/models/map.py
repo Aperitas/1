@@ -2,6 +2,7 @@ from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional, List
 from datetime import datetime
 from models.user import Users
+from models.car.map_link import CarMapLink
 
 class Map(SQLModel, table=True):
     __tablename__ = "maps"
@@ -28,3 +29,6 @@ class Map(SQLModel, table=True):
     # ===== 新增：用户反向关系 =====
     users: List["Users"] = Relationship(back_populates="map")
     # ==============================
+    # ===== 地图拥有的车辆（多对多） =====
+    cars: List["Cars"] = Relationship(back_populates="maps", link_model=CarMapLink)
+    # ===================================

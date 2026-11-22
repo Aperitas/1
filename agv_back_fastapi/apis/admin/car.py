@@ -1,14 +1,16 @@
 import datetime
-from typing import Optional
-from schemas.car_command import CarCommandIn, ControlModeIn
+from typing import Optional, List
+from schemas.car_command import CarCommandIn, ControlModeIn, CarMapSetIn
 from fastapi import APIRouter, Depends
-from sqlmodel import Session, select
+from sqlmodel import Session, select, delete
 
 from core.logger import logger
-from core.security import get_current_user, get_current_dispatcher
+from core.security import get_current_user, get_current_dispatcher, get_current_admin
 from db.session import get_session
 from models.car.car import Cars, CarStatus
+from models.car.map_link import CarMapLink
 from models.car.tasks import Tasks
+from models.map import Map
 from models.path import Path
 from models.user.users import Users
 from utils.resp_code import resp_200, resp_500, resp_400
@@ -18,6 +20,36 @@ from pydantic import BaseModel
 car_api = APIRouter(prefix='/cars')
 
 
+# ===== 车辆-地图关联辅助函数 =====
+def _normalize_map_ids(map_ids) -> List[int]:
+    """去重并保持传入顺序"""
+    return list(dict.fromkeys(map_ids or []))
+
+
+def _validate_map_ids(session: Session, map_ids):
+    """校验地图是否存在，返回 (ids, error)"""
+    unique_ids = _normalize_map_ids(map_ids)
+    if not unique_ids:
+        return [], None
+    exists = set(session.exec(select(Map.id).where(Map.id.in_(unique_ids))).all())
+    missing = [mid for mid in unique_ids if mid not in exists]
+    if missing:
+        return None, f"地图不存在: {missing}"
+    return unique_ids, None
+
+
+def _get_car_map_ids(session: Session, car_id: int) -> List[int]:
+    """查询车辆当前关联的地图 id 列表"""
+    return list(session.exec(select(CarMapLink.map_id).where(CarMapLink.car_id == car_id)).all())
+
+
+def _replace_car_maps(session: Session, car_id: int, map_ids: List[int]) -> None:
+    """覆盖式设置车辆所属地图（先清空再写入）"""
+    session.execute(delete(CarMapLink).where(CarMapLink.car_id == car_id))
+    for map_id in map_ids:
+        session.add(CarMapLink(car_id=car_id, map_id=map_id))
+
+
 # ===== 定义接收前端传来的小车数据结构 =====
 class CarCreateIn(BaseModel):
     name: str
@@ -25,6 +57,7 @@ class CarCreateIn(BaseModel):
     weight: Optional[float] = 50.0
     ip: Optional[str] = "192.168.1.100"
     port: Optional[str] = "9090"
+    map_ids: Optional[List[int]] = None  # 所属地图（可多选）
 
 @car_api.post("/create", summary="新增小车")
 async def create_car(
@@ -34,10 +67,15 @@ async def create_car(
 ):
     """
     在系统中新增一台小车。如果新增成功，返回自动生成的 car_id。
+    可通过 map_ids 指定该车所属地图（多选，可不传）。
     """
     if not user.isAdmin:
         return resp_400(msg="权限不足，仅管理员可操作")
-    
+
+    map_ids, error = _validate_map_ids(session, data.map_ids)
+    if error:
+        return resp_400(msg=error)
+
     try:
         # 创建新小车，所有轨迹数据默认给 0 或 100
         new_car = Cars(
@@ -58,9 +96,14 @@ async def create_car(
         session.add(new_car)
         session.commit()
         session.refresh(new_car)
-        
-        logger.info(f"管理员 {user.name} 新增了一台小车: {data.name} (ID: {new_car.id})")
-        return resp_200(msg="小车创建成功", data={"car_id": new_car.id})
+
+        # 写入车辆-地图关联
+        if map_ids:
+            _replace_car_maps(session, new_car.id, map_ids)
+            session.commit()
+
+        logger.info(f"管理员 {user.name} 新增了一台小车: {data.name} (ID: {new_car.id}, 地图: {map_ids})")
+        return resp_200(msg="小车创建成功", data={"car_id": new_car.id, "map_ids": map_ids})
     except Exception as e:
         session.rollback()
         logger.error(f"创建小车失败: {e}")
@@ -75,6 +118,7 @@ class CarUpdateIn(BaseModel):
     port: Optional[str] = None
     status: Optional[int] = None  # 允许管理员手动改状态
     description: Optional[str] = None
+    map_ids: Optional[List[int]] = None  # 所属地图（传了就整体覆盖）
 
 @car_api.put("/{car_id}/update", summary="修改小车信息")
 async def update_car(
@@ -94,8 +138,13 @@ async def update_car(
         return resp_400(msg="小车不存在")
         
     try:
-        # 遍历传入的字段并更新
+        # 遍历传入的字段并更新；map_ids 不是 Cars 的列，单独处理
         update_data = data.dict(exclude_unset=True)
+        new_map_ids = update_data.pop("map_ids", None)
+        if new_map_ids is not None:
+            new_map_ids, error = _validate_map_ids(session, new_map_ids)
+            if error:
+                return resp_400(msg=error)
         for key, value in update_data.items():
             # 如果传了 status，需要转成枚举类型
             if key == "status":
@@ -109,9 +158,15 @@ async def update_car(
         session.add(car)
         session.commit()
         session.refresh(car)
-        
+
+        if new_map_ids is not None:
+            _replace_car_maps(session, car.id, new_map_ids)
+            session.commit()
+
+        result = car.dict()
+        result["map_ids"] = _get_car_map_ids(session, car.id)
         logger.info(f"管理员 {user.name} 修改了小车 {car_id} 的信息")
-        return resp_200(msg="小车信息修改成功", data=car.dict())
+        return resp_200(msg="小车信息修改成功", data=result)
     except Exception as e:
         session.rollback()
         logger.error(f"修改小车信息失败: {e}")
@@ -120,12 +175,19 @@ async def update_car(
 @car_api.get("/list", summary="获取所有小车完整信息，包含地图GPS经纬度")
 async def get_car_list(user: Users = Depends(get_current_user)):
     """
-    前端地图页面调用，返回每台小车真实GPS经纬度/航向/电量
+    前端地图页面调用，返回每台小车真实GPS经纬度/航向/电量，以及所属地图列表
     """
     with get_session() as session:
         all_cars = session.query(Cars).all()
+        links = session.exec(select(CarMapLink)).all()
+        map_names = {m.id: m.name for m in session.exec(select(Map)).all()}
+        car_map_ids = {}
+        for link in links:
+            car_map_ids.setdefault(link.car_id, []).append(link.map_id)
+
         result = []
         for car in all_cars:
+            map_ids = car_map_ids.get(car.id, [])
             item = {
                 "car_id": car.id,
                 "name": car.name,
@@ -137,11 +199,55 @@ async def get_car_list(user: Users = Depends(get_current_user)):
                 "lon": car.lon,
                 "lat": car.lat,
                 "battery": car.battery,
-
-
+                "map_ids": map_ids,
+                "maps": [{"id": mid, "name": map_names.get(mid)} for mid in map_ids],
             }
             result.append(item)
     return resp_200(data=result)
+
+
+@car_api.get("/{car_id}/maps", summary="获取车辆所属地图")
+async def get_car_maps(
+    car_id: int,
+    session: Session = Depends(get_session),
+    user: Users = Depends(get_current_user)
+):
+    """查看某辆小车关联的所有地图。"""
+    car = session.get(Cars, car_id)
+    if not car:
+        return resp_400(msg="小车不存在")
+    map_ids = _get_car_map_ids(session, car_id)
+    maps = session.exec(select(Map).where(Map.id.in_(map_ids))).all() if map_ids else []
+    return resp_200(data={
+        "car_id": car_id,
+        "map_ids": map_ids,
+        "maps": [{"id": m.id, "name": m.name} for m in maps],
+    })
+
+
+@car_api.put("/{car_id}/maps", summary="设置车辆所属地图")
+async def set_car_maps(
+    car_id: int,
+    data: CarMapSetIn,
+    session: Session = Depends(get_session),
+    user: Users = Depends(get_current_admin)
+):
+    """覆盖式设置某辆小车所属的地图（传空数组表示解除全部关联）。"""
+    car = session.get(Cars, car_id)
+    if not car:
+        return resp_400(msg="小车不存在")
+    map_ids, error = _validate_map_ids(session, data.map_ids)
+    if error:
+        return resp_400(msg=error)
+    try:
+        _replace_car_maps(session, car_id, map_ids)
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        logger.error(f"设置车辆所属地图失败: {e}")
+        return resp_500(msg="设置车辆所属地图失败")
+    logger.info(f"管理员 {user.name} 设置小车 {car_id} 的所属地图为 {map_ids}")
+    return resp_200(data={"car_id": car_id, "map_ids": map_ids}, msg="设置成功")
 
 
 @car_api.delete("/{car_id}", summary="删除小车")
@@ -291,6 +397,20 @@ async def send_command(
             pass
 
         return resp_200(msg="小车已恢复运行")
+
+    elif data.command == "depart":
+        # wait_command 站点：允许调度端代为发车
+        ws_msg = {
+            "command": "depart",
+            "site_id": (data.params or {}).get("site_id"),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        try:
+            await manager.send_personal_json(ws_msg, car_id, "command")
+        except Exception:
+            pass
+        logger.info(f"管理员/调度员 {user.name} 向小车 {car_id} 下发发车指令")
+        return resp_200(msg="发车指令已下发")
 
     else:
         return resp_400(msg=f"不支持的指令: {data.command}")

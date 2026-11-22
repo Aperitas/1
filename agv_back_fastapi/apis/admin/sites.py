@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 from db.session import get_session
-from models.site import Site
+from models.site import Site, StopMode
 from schemas.path import SiteCreate, SiteUpdate, SiteOut
 from utils.resp_code import resp_200, resp_400, resp_500
 from core.security import get_current_user
@@ -12,6 +12,20 @@ from fastapi import Query
 
 router = APIRouter(prefix="/admin/sites", tags=["站点管理"])
 
+VALID_STOP_MODES = {StopMode.TIMED.value, StopMode.WAIT_COMMAND.value}
+
+
+def _validate_site(data) -> Optional[str]:
+    """校验停靠模式与停靠时间，返回错误信息或 None"""
+    stop_mode = getattr(data, "stop_mode", None)
+    if stop_mode is not None and stop_mode not in VALID_STOP_MODES:
+        return f"stop_mode 只能是 {sorted(VALID_STOP_MODES)}"
+    dwell_time = getattr(data, "dwell_time", None)
+    if dwell_time is not None and dwell_time < 0:
+        return "dwell_time 不能为负数"
+    return None
+
+
 @router.post("/", summary="新增站点")
 async def create_site(
         data: SiteCreate,
@@ -19,11 +33,14 @@ async def create_site(
         user: Users = Depends(get_current_user)
 ):
     """
-    前端在地图上点击后，保存一个站点（可设置停靠时间）。
+    前端在地图上点击后，保存一个站点（可设置停靠模式与停靠时间）。
     """
     if not user.isAdmin:
         return resp_400(msg="仅管理员可操作")
-    try:
+    error = _validate_site(data)
+    if error:
+        return resp_400(msg=error)
+    try :
         site = Site(**data.dict())
         session.add(site)
         session.commit()
@@ -68,6 +85,9 @@ async def update_site(
     """管理员修改站点信息，仅更新传入的字段。"""
     if not user.isAdmin:
         return resp_400(msg="仅管理员可操作")
+    error = _validate_site(data)
+    if error:
+        return resp_400(msg=error)
     site = session.get(Site, site_id)
     if not site:
         return resp_400(msg="站点不存在")
