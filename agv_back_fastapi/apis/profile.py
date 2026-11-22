@@ -12,9 +12,11 @@ from core.logger import logger
 from core.security import get_current_user, get_password_hash, verify_password
 from crud.user import get_user_conflict
 from db.session import get_session
+from models.map import Map
 from models.user.users import Users
 from schemas.user import OutputUser, PasswordChangeIn, ProfileUpdateIn
 from utils.resp_code import resp_200, resp_400, resp_500
+from sqlmodel import select
 
 profile_api = APIRouter(prefix='/profile')
 
@@ -69,6 +71,22 @@ async def update_my_profile(data: ProfileUpdateIn,user: Users = Depends(get_curr
 
     logger.info(f"用户 {user.name} 修改了个人资料: {list(update_data.keys())}")
     return resp_200(data=result,msg="资料修改成功")
+
+
+@profile_api.get("/maps", summary="获取我负责的地图")
+async def get_my_maps(user: Users = Depends(get_current_user)) :
+    """ 返回当前登录账户负责（可见）的地图列表；管理员返回全部地图 """
+    from apis.access import visible_map_ids
+    with get_session() as session :
+        visible = visible_map_ids(session,user)
+        if visible is None :
+            maps = session.exec(select(Map)).all()
+        else :
+            maps = session.exec(select(Map).where(Map.id.in_(visible))).all() if visible else []
+        return resp_200(data={
+            "map_ids" : [m.id for m in maps],
+            "maps" : [{"id" : m.id,"name" : m.name,"map_type" : m.map_type} for m in maps],
+        })
 
 
 @profile_api.put("/password", summary="修改自己的密码")

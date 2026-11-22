@@ -2,6 +2,9 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 from db.session import get_session
 from models.path import Path
+from models.map import Map
+from models.car.map_link import CarMapLink
+from apis.access import visible_map_ids
 from schemas.path import PathCreate, PathUpdate, PathOut
 from utils.resp_code import resp_200, resp_400, resp_500
 from core.security import get_current_user
@@ -11,6 +14,28 @@ from fastapi import Query
 from typing import List, Dict, Any
 import json
 router = APIRouter(prefix="/admin/paths", tags=["路线管理"])
+
+
+def _find_temp_path(session: Session, car_id: int, map_id: int, exclude_path_id: Optional[int] = None):
+    """查找同车同图的临时路径（可排除自身）"""
+    query = select(Path).where(Path.is_temp == True, Path.car_id == car_id, Path.map_id == map_id)
+    if exclude_path_id is not None:
+        query = query.where(Path.id != exclude_path_id)
+    return session.exec(query).first()
+
+
+def _validate_temp_path(session: Session, car_id: Optional[int], map_id: int,
+                        exclude_path_id: Optional[int] = None) -> Optional[str]:
+    """临时路径规则：必须指定车辆、车辆需关联该地图、每车每图仅一条"""
+    if car_id is None:
+        return "临时路径必须指定车辆"
+    link = session.exec(select(CarMapLink).where(
+        CarMapLink.car_id == car_id, CarMapLink.map_id == map_id)).first()
+    if link is None:
+        return "该车辆未关联此地图"
+    if _find_temp_path(session, car_id, map_id, exclude_path_id) is not None:
+        return "该车辆在此地图已存在临时路径"
+    return None
 
 @router.post("/", summary="保存路线（含节点序列和类型）")
 async def create_path(
@@ -24,6 +49,31 @@ async def create_path(
     """
     if not user.isAdmin:
         return resp_400(msg="仅管理员可操作")
+    # 路线必须归属一张已存在的地图
+    if session.get(Map, data.map_id) is None:
+        return resp_400(msg="地图不存在")
+
+    # 临时路径：每车每图仅一条，重复则自动覆盖
+    if data.is_temp:
+        error = _validate_temp_path(session, data.car_id, data.map_id)
+        if error is not None:
+            if error == "该车辆在此地图已存在临时路径":
+                existing = _find_temp_path(session, data.car_id, data.map_id)
+                try:
+                    existing.name = data.name
+                    existing.path_type = data.path_type
+                    existing.node_chain = json.dumps(data.node_chain)
+                    session.add(existing)
+                    session.commit()
+                    session.refresh(existing)
+                except Exception as e:
+                    session.rollback()
+                    return resp_500(msg=f"保存失败：{str(e)}")
+                out_data = existing.dict()
+                out_data["node_chain"] = json.loads(out_data["node_chain"])
+                return resp_200(data=out_data, msg="该车辆在此地图已有临时路径，已自动覆盖")
+            return resp_400(msg=error)
+
     try:
         # 将 node_chain 转为 JSON 字符串存储
         path = Path(
@@ -55,7 +105,12 @@ async def list_paths(
         user: Users = Depends(get_current_user)
 ):
     """获取路线列表，可按路线类型、所属小车、所属地图、是否临时路径筛选。"""
+    visible = visible_map_ids(session, user)
+    if map_id is not None and visible is not None and map_id not in visible:
+        return resp_400(msg="无权访问该地图")
     query = select(Path)
+    if visible is not None:
+        query = query.where(Path.map_id.in_(visible))
     if path_type:
         query = query.where(Path.path_type == path_type)
     if car_id:
@@ -82,6 +137,9 @@ async def get_path(
     path = session.get(Path, path_id)
     if not path:
         return resp_400(msg="路线不存在")
+    visible = visible_map_ids(session, user)
+    if visible is not None and path.map_id not in visible:
+        return resp_400(msg="无权访问该地图的路线")
     out = path.dict()
     out["node_chain"] = json.loads(out["node_chain"])
     return resp_200(data=out)
@@ -104,6 +162,18 @@ async def update_path(
         update_data["node_chain"] = json.dumps(update_data["node_chain"])
     for key, value in update_data.items():
         setattr(path, key, value)
+
+    # 校验归属地图
+    if path.map_id is None or session.get(Map, path.map_id) is None:
+        session.rollback()
+        return resp_400(msg="地图不存在")
+    # 校验临时路径规则（排除自身）
+    if path.is_temp:
+        error = _validate_temp_path(session, path.car_id, path.map_id, exclude_path_id=path.id)
+        if error is not None:
+            session.rollback()
+            return resp_400(msg=error)
+
     session.add(path)
     session.commit()
     session.refresh(path)

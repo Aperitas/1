@@ -37,6 +37,7 @@ class CreateUser(UpdateUser, UserIn):
     role: UserRole = Field(default=UserRole.GUEST,description="角色: admin/dispatcher/guest")
     code: Optional[str] = Field(default=None, max_length=6)  # 验证码也改为可选（因为已注释）
     map_id: Optional[int] = Field(default=None, description="用户默认地图ID")
+    map_ids: Optional[List[int]] = Field(default=None, description="账户负责的地图ID列表（多对多）")
 
 
 class OutputUser(UserIn) :
@@ -65,7 +66,13 @@ class UserUpdate(BaseModel):
     avatar: Optional[str] = None
     # ===== 新增：用户默认地图ID（管理员更新用户时可修改） =====
     map_id: Optional[int] = Field(default=None, description="用户默认地图ID")
+    map_ids: Optional[List[int]] = Field(default=None, description="账户负责的地图ID列表（多对多，传了就整体覆盖）")
     # ===========================================================
+
+
+class UserMapSetIn(BaseModel):
+    """设置账户负责的地图（覆盖式）"""
+    map_ids: List[int] = []
 
 
 class ProfileUpdateIn(BaseModel):

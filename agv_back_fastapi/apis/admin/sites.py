@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 from db.session import get_session
 from models.site import Site, StopMode
+from apis.access import visible_map_ids
 from schemas.path import SiteCreate, SiteUpdate, SiteOut
 from utils.resp_code import resp_200, resp_400, resp_500
 from core.security import get_current_user
@@ -57,7 +58,12 @@ async def list_sites(
         user: Users = Depends(get_current_user)
 ):
     """获取站点列表，可按 map_id 过滤。"""
+    visible = visible_map_ids(session, user)
+    if map_id is not None and visible is not None and map_id not in visible:
+        return resp_400(msg="无权访问该地图")
     query = select(Site)
+    if visible is not None:
+        query = query.where(Site.map_id.in_(visible))
     if map_id is not None:
         query = query.where(Site.map_id == map_id)
     sites = session.exec(query).all()
@@ -73,6 +79,9 @@ async def get_site(
     site = session.get(Site, site_id)
     if not site:
         return resp_400(msg="站点不存在")
+    visible = visible_map_ids(session, user)
+    if visible is not None and site.map_id not in visible:
+        return resp_400(msg="无权访问该地图的站点")
     return resp_200(data=site.dict())
 
 @router.put("/{site_id}", summary="修改站点信息")

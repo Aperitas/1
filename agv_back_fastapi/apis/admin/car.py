@@ -13,6 +13,7 @@ from models.car.tasks import Tasks
 from models.map import Map
 from models.path import Path
 from models.user.users import Users
+from apis.access import visible_map_ids
 from utils.resp_code import resp_200, resp_500, resp_400
 from apis.websocket.process import manager
 from pydantic import BaseModel
@@ -178,6 +179,7 @@ async def get_car_list(user: Users = Depends(get_current_user)):
     前端地图页面调用，返回每台小车真实GPS经纬度/航向/电量，以及所属地图列表
     """
     with get_session() as session:
+        visible = visible_map_ids(session, user)
         all_cars = session.query(Cars).all()
         links = session.exec(select(CarMapLink)).all()
         map_names = {m.id: m.name for m in session.exec(select(Map)).all()}
@@ -188,6 +190,11 @@ async def get_car_list(user: Users = Depends(get_current_user)):
         result = []
         for car in all_cars:
             map_ids = car_map_ids.get(car.id, [])
+            if visible is not None:
+                # 非管理员：只能看到与"自己负责的地图"关联的车辆
+                map_ids = [mid for mid in map_ids if mid in visible]
+                if not map_ids:
+                    continue
             item = {
                 "car_id": car.id,
                 "name": car.name,
@@ -217,6 +224,9 @@ async def get_car_maps(
     if not car:
         return resp_400(msg="小车不存在")
     map_ids = _get_car_map_ids(session, car_id)
+    visible = visible_map_ids(session, user)
+    if visible is not None:
+        map_ids = [mid for mid in map_ids if mid in visible]
     maps = session.exec(select(Map).where(Map.id.in_(map_ids))).all() if map_ids else []
     return resp_200(data={
         "car_id": car_id,
@@ -274,14 +284,22 @@ async def delete_car(
     if car.status == CarStatus.WORKING:
         return resp_400(msg="小车正在执行任务，请先停止后再删除")
 
-    # 2. 仍被路线引用时禁止删除（paths.car_id 为外键）
-    related_paths = session.exec(select(Path).where(Path.car_id == car_id)).all()
-    if related_paths:
-        return resp_400(msg=f"该小车仍被 {len(related_paths)} 条路线引用，请先删除或解除这些路线")
+    # 2. 普通路线仍禁止删除；临时路径随车辆自动清理
+    normal_paths = session.exec(select(Path).where(
+        Path.car_id == car_id, Path.is_temp == False)).all()
+    if normal_paths:
+        return resp_400(msg=f"该小车仍被 {len(normal_paths)} 条普通路线引用，请先删除或解除这些路线")
 
     car_name = car.name
     try:
-        # 3. 解除历史任务与小车的外键关联
+        # 3. 删除该车的临时路径、解除其与地图的关联
+        for temp_path in session.exec(select(Path).where(
+                Path.car_id == car_id, Path.is_temp == True)).all():
+            session.delete(temp_path)
+        for link in session.exec(select(CarMapLink).where(CarMapLink.car_id == car_id)).all():
+            session.delete(link)
+
+        # 4. 解除历史任务与小车的外键关联
         related_tasks = session.exec(select(Tasks).where(Tasks.car_id == car_id)).all()
         for task in related_tasks:
             task.car_id = None

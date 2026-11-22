@@ -6,11 +6,15 @@ import datetime
 
 from fastapi import APIRouter,Depends
 from fastapi import Path
-from schemas.user import AdminResetPasswordIn, CreateUser, UserUpdate
+from sqlmodel import select, delete
+from apis.access import normalize_ids
+from schemas.user import AdminResetPasswordIn, CreateUser, UserMapSetIn, UserUpdate
 from core.logger import logger
 from core.security import get_current_admin, get_password_hash
 from crud.user import create_user, get_user_conflict
 from db.session import get_session
+from models.map import Map
+from models.user.map_link import UserMapLink
 from models.user.users import Users, UserRole
 from utils.resp_code import resp_200,resp_500,resp_400
 
@@ -23,8 +27,12 @@ async def get_user_list(user: Users = Depends(get_current_admin)):
     with get_session() as session:
         try:
             all_user:list[Users] = session.query(Users).filter(Users.id != 1).all()
-            res_data = [{'id':u.id,'name':u.name,'nickname':u.nickname,
-                         'avatar':u.avatar,'role':u.effective_role} for u in all_user]
+            links = session.exec(select(UserMapLink)).all()
+            user_maps = {}
+            for link in links:
+                user_maps.setdefault(link.user_id, []).append(link.map_id)
+            res_data = [{'id':u.id,'name':u.name,'nickname':u.nickname,'avatar':u.avatar,
+                         'role':u.effective_role,'map_ids':user_maps.get(u.id,[])} for u in all_user]
             return resp_200(data=res_data,msg='获取用户名列表成功')
         except Exception as e:
             logger.error(f'获取用户名列表失败错误,因为：{e}')
@@ -40,9 +48,9 @@ async def create_new_user(userInfo: CreateUser,login_user: Users = Depends(get_c
     try:
         userInfo.hashed_password = get_password_hash(userInfo.password)
         userInfo.create_time = datetime.datetime.now()
-        if userInfo.map_id is None:
-            userInfo.map_id = 1
         result = create_user(userInfo)
+    except ValueError as e:
+        return resp_400(msg=str(e))
     except Exception as e:
         logger.error(f'创建用户失败！-- {e}')
         return resp_500(msg='创建用户失败！')
@@ -89,6 +97,21 @@ async def update_target_user(
 
             for k, v in update_dict.items():
                 setattr(target_user, k, v)
+
+            # 账户负责的地图（多对多，覆盖式）
+            if "map_ids" in update_data.dict(exclude_unset=True):
+                new_map_ids = normalize_ids(update_data.map_ids or [])
+                existing = set(session.exec(select(Map.id).where(Map.id.in_(new_map_ids))).all()) if new_map_ids else set()
+                missing = [m for m in new_map_ids if m not in existing]
+                if missing:
+                    return resp_400(msg=f"地图不存在: {missing}")
+                session.execute(delete(UserMapLink).where(UserMapLink.user_id == target_user.id))
+                for map_id in new_map_ids:
+                    session.add(UserMapLink(user_id=target_user.id, map_id=map_id))
+                if new_map_ids and target_user.map_id not in new_map_ids:
+                    target_user.map_id = new_map_ids[0]
+                if not new_map_ids:
+                    target_user.map_id = None
 
             session.commit()
             session.refresh(target_user)
@@ -145,3 +168,58 @@ async def reset_target_user_password(
 
     logger.info(f"管理员 {login_user.name} 重置了用户 {user_id} 的密码")
     return resp_200(msg="密码重置成功")
+
+
+# ------------------账户-地图（多对多） ------------------
+@user_api.get("/{user_id}/maps", summary="获取指定账户负责的地图")
+async def get_user_maps(
+        user_id: int = Path(..., description="目标用户ID"),
+        login_user: Users = Depends(get_current_admin)
+):
+    """管理员查看某个账户负责（关联）的地图列表。"""
+    with get_session() as session:
+        target = session.query(Users).filter(Users.id == user_id).first()
+        if not target:
+            return resp_400(msg="目标用户不存在")
+        map_ids = [link.map_id for link in session.exec(
+            select(UserMapLink).where(UserMapLink.user_id == user_id)).all()]
+        maps = session.exec(select(Map).where(Map.id.in_(map_ids))).all() if map_ids else []
+        return resp_200(data={
+            "user_id": user_id,
+            "map_ids": map_ids,
+            "maps": [{"id": m.id, "name": m.name, "map_type": m.map_type} for m in maps],
+        })
+
+
+@user_api.put("/{user_id}/maps", summary="设置指定账户负责的地图")
+async def set_user_maps(
+        data: UserMapSetIn,
+        user_id: int = Path(..., description="目标用户ID"),
+        login_user: Users = Depends(get_current_admin)
+):
+    """覆盖式设置某个账户负责的地图（传空数组表示解除全部关联）。"""
+    map_ids = normalize_ids(data.map_ids)
+    with get_session() as session:
+        target = session.query(Users).filter(Users.id == user_id).first()
+        if not target:
+            return resp_400(msg="目标用户不存在")
+        if map_ids:
+            existing = set(session.exec(select(Map.id).where(Map.id.in_(map_ids))).all())
+            missing = [m for m in map_ids if m not in existing]
+            if missing:
+                return resp_400(msg=f"地图不存在: {missing}")
+        try:
+            session.execute(delete(UserMapLink).where(UserMapLink.user_id == user_id))
+            for map_id in map_ids:
+                session.add(UserMapLink(user_id=user_id, map_id=map_id))
+            if map_ids and target.map_id not in map_ids:
+                target.map_id = map_ids[0]
+            if not map_ids:
+                target.map_id = None
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"设置账户地图失败: {e}")
+            return resp_500(msg="设置账户地图失败")
+    logger.info(f"管理员 {login_user.name} 设置账户 {user_id} 的地图为 {map_ids}")
+    return resp_200(data={"user_id": user_id, "map_ids": map_ids}, msg="设置成功")

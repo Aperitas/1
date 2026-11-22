@@ -11,6 +11,8 @@ from core.security import verify_password
 from crud.base import CRUDBase
 from db.session import get_session
 from models import Users
+from models.map import Map
+from models.user.map_link import UserMapLink
 from models.user.users import UserRole
 from schemas import UpdateUser,CreateUser
 from utils.custom_exc import ErrorUser
@@ -70,11 +72,20 @@ def get_user_conflict(name: Optional[str] = None,email: Optional[str] = None,
 
 
 def create_user(payload: CreateUser) -> dict :
-    """ 创建用户：role 与 isAdmin 自动同步、默认绑定地图 1，返回 {id, name, role}
+    """ 创建用户：role 与 isAdmin 自动同步、绑定负责的地图，返回 {id, name, role, map_ids}
         说明：邮箱/手机号暂不对外使用，users.email 列非空 → 自动填充占位邮箱 """
     role = payload.role.value if isinstance(payload.role,UserRole) else (payload.role or UserRole.GUEST.value)
     nickname = payload.nickname or payload.name
+    map_ids = list(dict.fromkeys(payload.map_ids or []))
+    default_map_id = payload.map_id
+    if default_map_id is None and map_ids :
+        default_map_id = map_ids[0]
     with get_session() as session :
+        if map_ids :
+            existing = set(session.exec(select(Map.id).where(Map.id.in_(map_ids))).all())
+            missing = [map_id for map_id in map_ids if map_id not in existing]
+            if missing :
+                raise ValueError(f"地图不存在: {missing}")
         user = Users(
             name=payload.name,
             hashed_password=payload.hashed_password or "",
@@ -82,14 +93,17 @@ def create_user(payload: CreateUser) -> dict :
             email=f"user.{uuid.uuid4().hex[:12]}@example.com",
             isActive=payload.isActive,
             create_time=payload.create_time,
-            map_id=payload.map_id or 1,
+            map_id=default_map_id,
             role=role,
             isAdmin=(role == UserRole.ADMIN.value),
         )
         session.add(user)
         session.commit()
         session.refresh(user)
-        result = {"id" : user.id,"name" : user.name,"role" : user.role}
+        for map_id in map_ids :
+            session.add(UserMapLink(user_id=user.id,map_id=map_id))
+        session.commit()
+        result = {"id" : user.id,"name" : user.name,"role" : user.role,"map_ids" : map_ids}
     return result
 
 

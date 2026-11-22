@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 from db.session import get_session
 from models.waypoint import Waypoint
+from apis.access import visible_map_ids
 from schemas.path import WaypointCreate, WaypointUpdate
 from utils.resp_code import resp_200, resp_400, resp_500
 from core.security import get_current_user
@@ -37,7 +38,12 @@ async def list_waypoints(
         user: Users = Depends(get_current_user)
 ):
     """获取路径点列表，可按 map_id 过滤。"""
+    visible = visible_map_ids(session, user)
+    if map_id is not None and visible is not None and map_id not in visible:
+        return resp_400(msg="无权访问该地图")
     query = select(Waypoint)
+    if visible is not None:
+        query = query.where(Waypoint.map_id.in_(visible))
     if map_id is not None:
         query = query.where(Waypoint.map_id == map_id)
     wps = session.exec(query).all()
@@ -53,6 +59,9 @@ async def get_waypoint(
     wp = session.get(Waypoint, wp_id)
     if not wp:
         return resp_400(msg="路径点不存在")
+    visible = visible_map_ids(session, user)
+    if visible is not None and wp.map_id not in visible:
+        return resp_400(msg="无权访问该地图的路径点")
     return resp_200(data=wp.dict())
 
 @router.put("/{wp_id}", summary="修改路径点信息")

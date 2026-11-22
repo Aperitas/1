@@ -4,9 +4,11 @@ date:2022年05月31日
 """
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Optional, List
 from pydantic import EmailStr
 from sqlmodel import SQLModel,Field,Relationship
+
+from models.user.map_link import UserMapLink
 
 
 class UserRole(str,Enum) :
@@ -35,13 +37,13 @@ class Users(SQLModel,table=True) :
     phone: Optional[int] = Field(default=None)
     address_id: Optional[int] = Field(default=None, description="保留字段,历史地址ID(已解除外键)")
 
-    # ===== 新增：关联地图 =====
+    # ===== 新增：关联地图（默认地图，单值） =====
     map_id: Optional[int] = Field(default=None, foreign_key="maps.id")
     # =========================
 
-    # ===== 新增：地图反向关系 =====
-    map: Optional["Map"] = Relationship(back_populates="users")
-    # =============================
+    # ===== 账户负责的地图（多对多） =====
+    maps: List["Map"] = Relationship(back_populates="users", link_model=UserMapLink)
+    # ===================================
 
     @property
     def effective_role(self) -> str :
