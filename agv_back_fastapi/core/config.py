@@ -18,11 +18,16 @@ project_desc = """
     - guest：游客，只读（只能看到自己负责的地图及其下属数据）
 
     【地图类型 map_type】
-    - tianditu：天地图，需要提供两个经纬度角点（lon_min/lat_min/lon_max/lat_max）
-    - grid：栅格地图，文件本身已包含经纬度
-    - pointcloud：点云地图，可作为定位漂移/丢失时的兜底地图（fallback_map_id）
+    - tianditu：天地图，用左上/右下两个经纬度角点（left_top_* / right_bottom_*）限定区域
+    - local：本地地图，同一地点的「点云 + 栅格」绑定在一条记录里；点云/栅格各自上传（上传接口 kind=pointcloud|grid）
+
+    【地图区域坐标】
+    - 可用 left_top_lon/left_top_lat + right_bottom_lon/right_bottom_lat（左上/右下）传入；
+    - 也可用 lon_min/lat_min/lon_max/lat_max；不传则不校验（后续可补录）；
+    - 返回中额外提供 bounds.left_top / bounds.right_bottom。
 
     【路线 / 临时路径】
+    - 每条路线记录所属地图类型 map_type（tianditu / local），可按此筛选
     - 普通路径 is_temp=false：同一车辆/地图可有多条
     - 临时路径 is_temp=true：必须指定 car_id，且每辆车在每张地图内只能有一条（重复创建会自动覆盖）
 

@@ -49,8 +49,9 @@ async def create_path(
     """
     if not user.isAdmin:
         return resp_400(msg="仅管理员可操作")
-    # 路线必须归属一张已存在的地图
-    if session.get(Map, data.map_id) is None:
+    # 路线必须归属一张已存在的地图（并自动继承地图类型）
+    map_obj = session.get(Map, data.map_id)
+    if map_obj is None:
         return resp_400(msg="地图不存在")
 
     # 临时路径：每车每图仅一条，重复则自动覆盖
@@ -63,6 +64,7 @@ async def create_path(
                     existing.name = data.name
                     existing.path_type = data.path_type
                     existing.node_chain = json.dumps(data.node_chain)
+                    existing.map_type = map_obj.map_type
                     session.add(existing)
                     session.commit()
                     session.refresh(existing)
@@ -81,6 +83,7 @@ async def create_path(
             path_type=data.path_type,
             car_id=data.car_id,
             map_id=data.map_id,
+            map_type=map_obj.map_type,
             is_temp=data.is_temp,
             node_chain=json.dumps(data.node_chain)   # 记得 import json
         )
@@ -100,11 +103,12 @@ async def list_paths(
         path_type: Optional[str] = Query(None, description="路线类型: 吸附道路/贝塞尔曲线/折线"),
         car_id: Optional[int] = Query(None, description="关联小车ID"),
         map_id: Optional[int] = Query(None, description="按地图ID筛选"),
+        map_type: Optional[str] = Query(None, description="按地图类型筛选：tianditu=天地图 / local=本地地图"),
         is_temp: Optional[bool] = Query(None, description="是否临时路径"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
-    """获取路线列表，可按路线类型、所属小车、所属地图、是否临时路径筛选。"""
+    """获取路线列表，可按路线类型、所属小车、所属地图、地图类型、是否临时路径筛选。"""
     visible = visible_map_ids(session, user)
     if map_id is not None and visible is not None and map_id not in visible:
         return resp_400(msg="无权访问该地图")
@@ -117,6 +121,8 @@ async def list_paths(
         query = query.where(Path.car_id == car_id)
     if map_id is not None:
         query = query.where(Path.map_id == map_id)
+    if map_type is not None:
+        query = query.where(Path.map_type == map_type)
     if is_temp is not None:
         query = query.where(Path.is_temp == is_temp)
     paths = session.exec(query).all()
@@ -163,10 +169,12 @@ async def update_path(
     for key, value in update_data.items():
         setattr(path, key, value)
 
-    # 校验归属地图
-    if path.map_id is None or session.get(Map, path.map_id) is None:
+    # 校验归属地图，并同步地图类型
+    map_obj = session.get(Map, path.map_id) if path.map_id is not None else None
+    if map_obj is None:
         session.rollback()
         return resp_400(msg="地图不存在")
+    path.map_type = map_obj.map_type
     # 校验临时路径规则（排除自身）
     if path.is_temp:
         error = _validate_temp_path(session, path.car_id, path.map_id, exclude_path_id=path.id)

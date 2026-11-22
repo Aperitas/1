@@ -11,13 +11,12 @@ from models.car.map_link import CarMapLink
 class MapType(str, Enum):
     """地图类型
 
-    - TIANDITU(tianditu)：天地图（矢量/影像瓦片），需要用两个经纬度角点限定区域
-    - GRID(grid)：栅格地图，文件本身已包含经纬度信息
-    - POINTCLOUD(pointcloud)：点云地图，作为定位漂移/丢失时的兜底地图
+    - TIANDITU(tianditu)：天地图（矢量/影像瓦片），用左上/右下两个经纬度角点限定区域
+    - LOCAL(local)：本地地图，同一地点的「点云 + 栅格」两两绑定在一条记录里，
+      并保存左上/右下经纬度，用于把该图叠加到天地图上
     """
     TIANDITU = "tianditu"
-    GRID = "grid"
-    POINTCLOUD = "pointcloud"
+    LOCAL = "local"
 
 
 class Map(SQLModel, table=True):
@@ -29,23 +28,32 @@ class Map(SQLModel, table=True):
     center_lon: float = Field(default=113.9686, description="地图中心经度")
     center_lat: float = Field(default=22.6042, description="地图中心纬度")
     zoom: int = Field(default=17, description="默认缩放级别")
-    # ===== 地图类型与天地图区域（两个角点） =====
+    # ===== 地图类型与区域（左上 / 右下 两个角点） =====
     map_type: str = Field(default=MapType.TIANDITU.value, index=True,
-                          description="地图类型: tianditu=天地图, grid=栅格, pointcloud=点云")
-    lon_min: Optional[float] = Field(default=None, description="区域西南角经度")
-    lat_min: Optional[float] = Field(default=None, description="区域西南角纬度")
-    lon_max: Optional[float] = Field(default=None, description="区域东北角经度")
-    lat_max: Optional[float] = Field(default=None, description="区域东北角纬度")
-    # ===== 定位漂移/丢失时的兜底点云图 =====
+                          description="地图类型: tianditu=天地图, local=本地地图（点云+栅格）")
+    lon_min: Optional[float] = Field(default=None, description="区域左边界经度（左上经度 = 西边界）")
+    lat_min: Optional[float] = Field(default=None, description="区域下边界纬度（右下纬度 = 南边界）")
+    lon_max: Optional[float] = Field(default=None, description="区域右边界经度（右下经度 = 东边界）")
+    lat_max: Optional[float] = Field(default=None, description="区域上边界纬度（左上纬度 = 北边界）")
+    # ===== 定位漂移/丢失时的兜底地图（一般为天地图指向一张本地地图） =====
     fallback_map_id: Optional[int] = Field(default=None, foreign_key="maps.id",
-                                           description="漂移/丢定位时切换的点云地图ID")
-    created_at: datetime = Field(default_factory=datetime.now)
-    # ===== 新增：文件相关字段 =====
-    file_path: Optional[str] = Field(default=None, description="文件存储路径")
-    file_type: Optional[str] = Field(default=None, description="文件类型，如 pcd/zip")
-    file_size: Optional[int] = Field(default=None, description="文件大小（字节）")
-    upload_time: Optional[datetime] = Field(default=None, description="上传时间")
-    # ===============================
+                                           description="兜底地图ID：必须是 local 类型（天地图漂移时切换到的本地地图）")
+    created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
+    # ===== 本地地图（local）：点云 + 栅格两套文件 =====
+    pointcloud_file_path: Optional[str] = Field(default=None, description="点云文件存储路径")
+    pointcloud_file_type: Optional[str] = Field(default=None, description="点云文件类型，如 pcd/ply/zip")
+    pointcloud_file_size: Optional[int] = Field(default=None, description="点云文件大小（字节）")
+    pointcloud_file_upload_time: Optional[datetime] = Field(default=None, description="点云文件上传时间")
+    grid_file_path: Optional[str] = Field(default=None, description="栅格文件存储路径")
+    grid_file_type: Optional[str] = Field(default=None, description="栅格文件类型，如 png/tif/zip")
+    grid_file_size: Optional[int] = Field(default=None, description="栅格文件大小（字节）")
+    grid_file_upload_time: Optional[datetime] = Field(default=None, description="栅格文件上传时间")
+    # ===== 以下为历史字段（早期单文件版本），保留但不再读写 =====
+    file_path: Optional[str] = Field(default=None, description="历史字段：早期地图文件路径")
+    file_type: Optional[str] = Field(default=None, description="历史字段：早期地图文件类型")
+    file_size: Optional[int] = Field(default=None, description="历史字段：早期文件大小（字节）")
+    upload_time: Optional[datetime] = Field(default=None, description="历史字段：早期上传时间")
+    # ================================================================
 
 
     # 关系

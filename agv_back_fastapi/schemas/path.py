@@ -101,5 +101,6 @@ class PathOut(SQLModel):
     node_chain: List[Dict[str, Any]] = Field(..., description="有序节点序列（已从 JSON 字符串转为对象）")
     car_id: Optional[int] = Field(default=None, description="专属车辆ID")
     map_id: int = Field(..., description="所属地图ID")
+    map_type: str = Field(..., description="所属地图类型：tianditu=天地图 / local=本地地图")
     is_temp: bool = Field(..., description="是否临时路径")
     created_at: datetime = Field(..., description="创建时间")
