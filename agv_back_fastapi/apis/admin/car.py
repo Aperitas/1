@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 
 from core.logger import logger
-from core.security import get_current_user
+from core.security import get_current_user, get_current_dispatcher
 from db.session import get_session
 from models.car.car import Cars, CarStatus
 from models.car.tasks import Tasks
@@ -199,7 +199,7 @@ async def delete_car(
 async def send_command(
         car_id: int,
         data: CarCommandIn,
-        user: Users = Depends(get_current_user),
+        user: Users = Depends(get_current_dispatcher),
         session: Session = Depends(get_session)
 ):
     """
@@ -299,7 +299,7 @@ async def send_command(
 async def switch_control_mode(
         car_id: int,
         data: ControlModeIn,
-        user: Users = Depends(get_current_user),
+        user: Users = Depends(get_current_dispatcher),
         session: Session = Depends(get_session)
 ):
     """
@@ -312,11 +312,7 @@ async def switch_control_mode(
     - 小车正在执行任务（WORKING）时不允许切换，需先暂停或停止。
     - 切换为 TRACKING 时必须指定 path_id（寻迹的路线）。
     """
-    # 1. 仅管理员可操作
-    if not user.isAdmin:
-        return resp_400(msg="权限不足，仅管理员可切换控制模式")
-
-    # 2. 校验小车是否存在
+    # 1. 校验小车是否存在（权限已由 get_current_dispatcher 依赖校验）
     car = session.get(Cars, car_id)
     if not car:
         return resp_400(msg="小车不存在")

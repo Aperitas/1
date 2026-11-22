@@ -37,6 +37,7 @@ async def get_user_info(user: Users = Depends(get_current_user),user_id:Optional
         target_user = user
 
     data = OutputUser.from_orm(target_user)
-    # 判断【被查询用户】的isAdmin，不是登录者user
-    data.roles = ["admin"] if target_user.isAdmin else ["client"]
+    # 判断【被查询用户】的角色，不是登录者user
+    data.role = target_user.effective_role
+    data.roles = [target_user.effective_role]
     return resp_200(data=data)

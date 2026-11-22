@@ -35,7 +35,14 @@ async def login_access_token(
     except Exception as e :
         logger.error(f'数据库连接失败！-- {e}')
         return resp_500(msg=f'数据库连接失败！')
-    return resp_200(data={"token" : token,"token_type" : "bearer"})
+    return resp_200(data={
+        "token" : token,
+        "token_type" : "bearer",
+        "name" : current_user.name,
+        "nickname" : current_user.nickname,
+        "role" : current_user.effective_role,
+        "avatar" : current_user.avatar,
+    })
     # return {"access_token": token, "token_type": "bearer"}
 
 

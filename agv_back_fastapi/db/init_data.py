@@ -8,6 +8,7 @@ from core.logger import logger
 from core.security import get_password_hash
 from crud.user import userCrud
 from models.user import Users
+from models.user.users import UserRole
 from .session import get_session
 
 
@@ -21,6 +22,7 @@ def init_user():
                                   hashed_password=get_password_hash('123456'),
                                   create_time=datetime.datetime.now() - datetime.timedelta(2000),
                                   isAdmin=True,
+                                  role=UserRole.ADMIN.value,
                                   nickname='admin',
                                   email='965794928@qq.com',
                                   phone='18978911249')

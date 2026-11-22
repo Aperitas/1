@@ -9,25 +9,36 @@ from typing import Union,Optional
 from fastapi import Depends,HTTPException,Header,status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt,JWTError
-from passlib.context import CryptContext
+import bcrypt
 
 from core import settings
+from models.user.users import UserRole,Users
 from schemas.token import TokenInfo
 from utils import AccessTokenFail
 
 ALGORITHM = "HS256"  # 加密算法
-pwd_context = CryptContext(schemes=["bcrypt"],deprecated="auto")  # 加密密码
+BCRYPT_MAX_BYTES = 72  # bcrypt 单次可处理的密码字节上限
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_PREFIX}/test/login")
 
 
+def _prepare_password(password: str) -> bytes :
+    """ 把明文密码转成 bcrypt 可处理的字节串（超出 72 字节按 bcrypt 规则截断） """
+    return password.encode("utf-8")[:BCRYPT_MAX_BYTES]
+
+
 def get_password_hash(password: str) -> str :
-    """ 加密明文密码 """
-    return pwd_context.hash(password)
+    """ 加密明文密码（输出 $2b$ 格式，与历史 passlib 生成的哈希兼容） """
+    return bcrypt.hashpw(_prepare_password(password),bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(password: str,hashed_password: str) -> bool :
     """ 验证明文密码 与 加密后的密码 是否一致 """
-    return pwd_context.verify(password,hashed_password)
+    if not hashed_password :
+        return False
+    try :
+        return bcrypt.checkpw(_prepare_password(password),hashed_password.encode("utf-8"))
+    except (ValueError,TypeError) :
+        return False
 
 
 def create_access_token(data: dict,expires_delta: Optional[timedelta] = None) -> str :
@@ -92,14 +103,23 @@ if __name__ == '__main__' :
     print(verify_password('123456','$2b$12$I5lfn4eO8M0oH4yYQWjSQ.t4VJz9cGKXA.ht6syIG6tAXmbnQywqa'))  # True
     print(verify_password('123456','$2b$12$h58wHhABGgNSRfQCqYFod.0mycfuLZIWQmtvKgP9s0VyYs78In6b.'))  # True
 
-from fastapi import Depends, HTTPException, status
-
 # 异步管理员鉴权，和上面get_current_user保持一致async写法
-async def get_current_admin(user = Depends(get_current_user)):
+async def get_current_admin(user: Users = Depends(get_current_user)) :
+    """仅管理员可访问：用于用户/地图/线路/小车等管理类操作"""
     # get_current_user已经校验完token有效、用户存在
-    if not user.isAdmin:
+    if user.effective_role != UserRole.ADMIN.value :
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="仅管理员账号可执行此操作"
+        )
+    return user
+
+
+async def get_current_dispatcher(user: Users = Depends(get_current_user)) :
+    """管理员或调度员可访问：用于任务下发、控制模式切换等调度类操作"""
+    if user.effective_role not in (UserRole.ADMIN.value,UserRole.DISPATCHER.value) :
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="仅管理员或调度员可执行调度操作"
         )
     return user

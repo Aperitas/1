@@ -10,6 +10,7 @@ from core.security import verify_password
 from crud.base import CRUDBase
 from db.session import get_session
 from models import Users
+from models.user.users import UserRole
 from schemas import UpdateUser,CreateUser
 from utils.custom_exc import ErrorUser
 
@@ -46,5 +47,49 @@ class UserCrud(CRUDBase[Users,UpdateUser,CreateUser]) :
 
 
 userCrud = UserCrud()
+
+
+def get_user_conflict(name: Optional[str] = None,email: Optional[str] = None,
+                      exclude_id: Optional[int] = None) -> Optional[str] :
+    """ 检查用户名/邮箱是否被占用：返回提示信息，无冲突返回 None """
+    with get_session() as session :
+        if name :
+            query = session.query(Users).filter(Users.name == name)
+            if exclude_id is not None :
+                query = query.filter(Users.id != exclude_id)
+            if query.first() is not None :
+                return "用户名已经存在，请更换用户名"
+        if email :
+            query = session.query(Users).filter(Users.email == email)
+            if exclude_id is not None :
+                query = query.filter(Users.id != exclude_id)
+            if query.first() is not None :
+                return "该邮箱已经被注册，请更换邮箱"
+    return None
+
+
+def create_user(payload: CreateUser) -> dict :
+    """ 创建用户：role 与 isAdmin 自动同步、默认绑定地图 1，返回 {id, name, role} """
+    role = payload.role.value if isinstance(payload.role,UserRole) else (payload.role or UserRole.GUEST.value)
+    with get_session() as session :
+        user = Users(
+            name=payload.name,
+            hashed_password=payload.hashed_password or "",
+            nickname=payload.nickname,
+            email=payload.email,
+            phone=payload.phone,
+            isActive=payload.isActive,
+            create_time=payload.create_time,
+            map_id=payload.map_id or 1,
+            role=role,
+            isAdmin=(role == UserRole.ADMIN.value),
+        )
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        result = {"id" : user.id,"name" : user.name,"role" : user.role}
+    return result
+
+
 if __name__ == "__main__" :
     print(userCrud.get_by_name("admin").dict())
