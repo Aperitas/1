@@ -1,7 +1,7 @@
 import datetime
 from typing import Optional, List
 from schemas.car_command import CarCommandIn, ControlModeIn, CarMapSetIn
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select, delete
 
 from core.logger import logger
@@ -14,6 +14,7 @@ from models.map import Map
 from models.path import Path
 from models.user.users import Users
 from apis.access import visible_map_ids
+from apis.views import car_payload
 from utils.resp_code import resp_200, resp_500, resp_400
 from apis.websocket.process import manager
 from pydantic import BaseModel
@@ -173,43 +174,40 @@ async def update_car(
         logger.error(f"修改小车信息失败: {e}")
         return resp_500(msg=f"修改失败: {str(e)}")
 
-@car_api.get("/list", summary="获取所有小车完整信息，包含地图GPS经纬度")
-async def get_car_list(user: Users = Depends(get_current_user)):
+@car_api.get("/list", summary="获取小车列表（可按地图ID筛选）")
+async def get_car_list(
+    map_id: Optional[int] = Query(None, description="按地图ID筛选：只返回该地图上的小车"),
+    user: Users = Depends(get_current_user)
+):
     """
-    前端地图页面调用，返回每台小车真实GPS经纬度/航向/电量，以及所属地图列表
+    前端地图页面调用，返回每台小车真实GPS经纬度/航向/电量，以及所属地图列表。
+    传 map_id 时只返回该地图上的车；非管理员只能看到自己负责的地图。
     """
     with get_session() as session:
         visible = visible_map_ids(session, user)
+        if map_id is not None:
+            if session.get(Map, map_id) is None:
+                return resp_400(msg="地图不存在")
+            if visible is not None and map_id not in visible:
+                return resp_400(msg="无权访问该地图")
+
         all_cars = session.query(Cars).all()
-        links = session.exec(select(CarMapLink)).all()
         map_names = {m.id: m.name for m in session.exec(select(Map)).all()}
         car_map_ids = {}
-        for link in links:
+        for link in session.exec(select(CarMapLink)).all():
             car_map_ids.setdefault(link.car_id, []).append(link.map_id)
 
         result = []
         for car in all_cars:
-            map_ids = car_map_ids.get(car.id, [])
+            car_maps = car_map_ids.get(car.id, [])
             if visible is not None:
                 # 非管理员：只能看到与"自己负责的地图"关联的车辆
-                map_ids = [mid for mid in map_ids if mid in visible]
-                if not map_ids:
+                car_maps = [mid for mid in car_maps if mid in visible]
+                if not car_maps:
                     continue
-            item = {
-                "car_id": car.id,
-                "name": car.name,
-                "status": car.status,
-                "control_mode": car.control_mode,
-                "tracking_path_id": car.tracking_path_id,
-                "yaw": car.yaw,
-                "speed": car.speed,
-                "lon": car.lon,
-                "lat": car.lat,
-                "battery": car.battery,
-                "map_ids": map_ids,
-                "maps": [{"id": mid, "name": map_names.get(mid)} for mid in map_ids],
-            }
-            result.append(item)
+            if map_id is not None and map_id not in car_maps:
+                continue
+            result.append(car_payload(car, car_maps, map_names))
     return resp_200(data=result)
 
 
@@ -219,7 +217,7 @@ async def get_car_maps(
     session: Session = Depends(get_session),
     user: Users = Depends(get_current_user)
 ):
-    """查看某辆小车关联的所有地图。"""
+    """查看某辆小车关联的所有地图（含类型/中心点/范围，便于前端直接切图）。"""
     car = session.get(Cars, car_id)
     if not car:
         return resp_400(msg="小车不存在")
@@ -231,7 +229,18 @@ async def get_car_maps(
     return resp_200(data={
         "car_id": car_id,
         "map_ids": map_ids,
-        "maps": [{"id": m.id, "name": m.name} for m in maps],
+        "maps": [{
+            "id": m.id,
+            "name": m.name,
+            "map_type": m.map_type,
+            "center_lon": m.center_lon,
+            "center_lat": m.center_lat,
+            "zoom": m.zoom,
+            "lon_min": m.lon_min,
+            "lat_min": m.lat_min,
+            "lon_max": m.lon_max,
+            "lat_max": m.lat_max,
+        } for m in maps],
     })
 
 

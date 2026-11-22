@@ -9,6 +9,7 @@ from models.car.car import Cars
 from models.car.map_link import CarMapLink
 from models.user.map_link import UserMapLink
 from apis.access import visible_map_ids
+from apis.views import car_payload
 from schemas.map import MapCreate, MapUpdate, MapOut
 from utils.resp_code import resp_200, resp_400, resp_500
 from core.security import get_current_user, get_current_admin
@@ -208,10 +209,23 @@ async def list_map_cars(
     car_ids = [link.car_id for link in session.exec(
         select(CarMapLink).where(CarMapLink.map_id == map_id)).all()]
     cars = session.exec(select(Cars).where(Cars.id.in_(car_ids))).all() if car_ids else []
+
+    # 车辆可能属于多张地图：一并带出（非管理员只列出可见地图）
+    car_map_ids = {}
+    if car_ids:
+        for link in session.exec(select(CarMapLink).where(CarMapLink.car_id.in_(car_ids))).all():
+            car_map_ids.setdefault(link.car_id, []).append(link.map_id)
+    map_names = {m.id: m.name for m in session.exec(select(Map)).all()}
+    payload = []
+    for car in cars:
+        mids = car_map_ids.get(car.id, [])
+        if visible is not None:
+            mids = [mid for mid in mids if mid in visible]
+        payload.append(car_payload(car, mids, map_names))
     return resp_200(data={
         "map_id": map_id,
         "car_ids": car_ids,
-        "cars": [{"id": c.id, "name": c.name, "status": c.status} for c in cars],
+        "cars": payload,
     })
 
 
