@@ -19,8 +19,8 @@ class Path(SQLModel, table=True):
     # 是否临时路径（属性/功能与普通路径完全一致，仅用于前端分组与筛选）
     is_temp: bool = Field(default=False, index=True, description="是否临时路径")
 
-    created_at: Optional[datetime] = Field(default_factory=datetime.now)
-    map_id: Optional[int] = Field(default=None, foreign_key="maps.id")
+    created_at: Optional[datetime] = Field(default_factory=datetime.now, description="创建时间")
+    map_id: Optional[int] = Field(default=None, foreign_key="maps.id", description="所属地图ID（路线必须归属地图）")
     map: Optional["Map"] = Relationship(back_populates="paths")
     def set_nodes(self, nodes: List[Dict[str, any]]):
         self.node_chain = json.dumps(nodes)

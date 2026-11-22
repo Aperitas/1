@@ -2,7 +2,7 @@
 author:dlr123
 date:2022年06月07日
 """
-from fastapi import APIRouter,Depends
+from fastapi import APIRouter,Depends,Query
 from typing import Optional
 from core.logger import logger
 from core.security import get_current_user
@@ -16,7 +16,7 @@ commons_api = APIRouter(prefix="/commons")
 
 
 @commons_api.get('/userinfo', summary="获取用户信息（可查询指定用户）")
-async def get_user_info(user: Users = Depends(get_current_user),user_id:Optional[int]=None) :
+async def get_user_info(user: Users = Depends(get_current_user),user_id:Optional[int]=Query(None,description="要查询的用户ID：不传=返回登录者自己；传了只有管理员可查他人")) :
     """不传 user_id 返回登录者自身信息；传 user_id 时仅管理员可查询他人信息。"""
     target_user = None
     if user_id is not None:

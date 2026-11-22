@@ -1,7 +1,7 @@
 import datetime
 from typing import Optional, List
 from schemas.car_command import CarCommandIn, ControlModeIn, CarMapSetIn
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Body, Path as ApiPath
 from sqlmodel import Session, select, delete
 
 from core.logger import logger
@@ -17,7 +17,7 @@ from apis.access import visible_map_ids
 from apis.views import car_payload
 from utils.resp_code import resp_200, resp_500, resp_400
 from apis.websocket.process import manager
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 car_api = APIRouter(prefix='/cars')
 
@@ -54,12 +54,13 @@ def _replace_car_maps(session: Session, car_id: int, map_ids: List[int]) -> None
 
 # ===== 定义接收前端传来的小车数据结构 =====
 class CarCreateIn(BaseModel):
-    name: str
-    productor: Optional[str] = "未知厂商"
-    weight: Optional[float] = 50.0
-    ip: Optional[str] = "192.168.1.100"
-    port: Optional[str] = "9090"
-    map_ids: Optional[List[int]] = None  # 所属地图（可多选）
+    """新增小车（管理员）"""
+    name: str = Field(..., description="车辆名称，如 'AGV-01'")
+    productor: Optional[str] = Field(default="未知厂商", description="厂商")
+    weight: Optional[float] = Field(default=50.0, description="载重（kg）")
+    ip: Optional[str] = Field(default="192.168.1.100", description="车端 IP")
+    port: Optional[str] = Field(default="9090", description="车端端口")
+    map_ids: Optional[List[int]] = Field(default=None, description="车辆所属地图ID列表（可多选）")
 
 @car_api.post("/create", summary="新增小车")
 async def create_car(
@@ -113,19 +114,20 @@ async def create_car(
 
 # 放在 CarCreateIn 的下面
 class CarUpdateIn(BaseModel):
-    name: Optional[str] = None
-    productor: Optional[str] = None
-    weight: Optional[float] = None
-    ip: Optional[str] = None
-    port: Optional[str] = None
-    status: Optional[int] = None  # 允许管理员手动改状态
-    description: Optional[str] = None
-    map_ids: Optional[List[int]] = None  # 所属地图（传了就整体覆盖）
+    """修改小车（管理员）：只传需要修改的字段"""
+    name: Optional[str] = Field(default=None, description="车辆名称")
+    productor: Optional[str] = Field(default=None, description="厂商")
+    weight: Optional[float] = Field(default=None, description="载重（kg）")
+    ip: Optional[str] = Field(default=None, description="车端 IP")
+    port: Optional[str] = Field(default=None, description="车端端口")
+    status: Optional[int] = Field(default=None, description="状态：0关机/1空闲/2工作中/3暂停/4充电/5故障")
+    description: Optional[str] = Field(default=None, description="备注")
+    map_ids: Optional[List[int]] = Field(default=None, description="车辆所属地图ID列表（传了就整体覆盖，传 [] 表示解除全部）")
 
 @car_api.put("/{car_id}/update", summary="修改小车信息")
 async def update_car(
-    car_id: int,
-    data: CarUpdateIn,
+    car_id: int = ApiPath(..., description="车辆ID"),
+    data: CarUpdateIn = Body(..., description="要修改的字段（只传需要改的）"),
     session: Session = Depends(get_session),
     user: Users = Depends(get_current_user)
 ):
@@ -213,7 +215,7 @@ async def get_car_list(
 
 @car_api.get("/{car_id}/maps", summary="获取车辆所属地图")
 async def get_car_maps(
-    car_id: int,
+    car_id: int = ApiPath(..., description="车辆ID"),
     session: Session = Depends(get_session),
     user: Users = Depends(get_current_user)
 ):
@@ -246,8 +248,8 @@ async def get_car_maps(
 
 @car_api.put("/{car_id}/maps", summary="设置车辆所属地图")
 async def set_car_maps(
-    car_id: int,
-    data: CarMapSetIn,
+    car_id: int = ApiPath(..., description="车辆ID"),
+    data: CarMapSetIn = Body(..., description="地图ID列表（覆盖式，传 [] 解除全部关联）"),
     session: Session = Depends(get_session),
     user: Users = Depends(get_current_admin)
 ):
@@ -271,7 +273,7 @@ async def set_car_maps(
 
 @car_api.delete("/{car_id}", summary="删除小车")
 async def delete_car(
-    car_id: int,
+    car_id: int = ApiPath(..., description="车辆ID"),
     session: Session = Depends(get_session),
     user: Users = Depends(get_current_user)
 ):
@@ -330,8 +332,8 @@ async def delete_car(
 
 @car_api.post("/{car_id}/command", summary="下发指令给小车")
 async def send_command(
-        car_id: int,
-        data: CarCommandIn,
+        car_id: int = ApiPath(..., description="车辆ID"),
+        data: CarCommandIn = Body(..., description="指令内容（command 必填）"),
         user: Users = Depends(get_current_dispatcher),
         session: Session = Depends(get_session)
 ):
@@ -444,8 +446,8 @@ async def send_command(
 
 @car_api.post("/{car_id}/control_mode", summary="切换小车控制模式")
 async def switch_control_mode(
-        car_id: int,
-        data: ControlModeIn,
+        car_id: int = ApiPath(..., description="车辆ID"),
+        data: ControlModeIn = Body(..., description="目标控制模式（mode 必填）"),
         user: Users = Depends(get_current_dispatcher),
         session: Session = Depends(get_session)
 ):

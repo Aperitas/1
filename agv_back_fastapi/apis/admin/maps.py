@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, File, UploadFile, Form
+from fastapi import APIRouter, Depends, Query, Body, File, UploadFile, Form, Path as ApiPath
 from sqlmodel import Session, select
 from db.session import get_session
 from models.map import Map, MapType
@@ -83,8 +83,8 @@ async def create_map(
 
 @router.post("/upload", summary="上传地图文件")
 async def upload_map_file(
-        map_id: int = Form(...),
-        file: UploadFile = File(...),
+        map_id: int = Form(..., description="要绑定文件的地图ID"),
+        file: UploadFile = File(..., description="地图文件（点云 .pcd/.zip 等）"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
@@ -170,7 +170,7 @@ async def list_maps(
 
 @router.get("/{map_id}", summary="获取单个地图详情")
 async def get_map(
-        map_id: int,
+        map_id: int = ApiPath(..., description="地图ID"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
@@ -195,7 +195,7 @@ async def get_map(
 
 @router.get("/{map_id}/cars", summary="获取地图包含的车辆")
 async def list_map_cars(
-        map_id: int,
+        map_id: int = ApiPath(..., description="地图ID"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
@@ -231,8 +231,8 @@ async def list_map_cars(
 
 @router.get("/{map_id}/paths", summary="获取地图包含的路线")
 async def list_map_paths(
-        map_id: int,
-        is_temp: Optional[bool] = Query(None, description="是否临时路径"),
+        map_id: int = ApiPath(..., description="地图ID"),
+        is_temp: Optional[bool] = Query(None, description="是否临时路径：true=只看临时 / false=只看普通 / 不传=全部"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
@@ -256,7 +256,7 @@ async def list_map_paths(
 
 @router.get("/{map_id}/users", summary="获取地图关联的账户")
 async def list_map_users(
-        map_id: int,
+        map_id: int = ApiPath(..., description="地图ID"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_admin)
 ):
@@ -276,8 +276,8 @@ async def list_map_users(
 
 @router.put("/{map_id}", summary="修改地图信息")
 async def update_map(
-        map_id: int,
-        data: MapUpdate,
+        map_id: int = ApiPath(..., description="地图ID"),
+        data: MapUpdate = Body(..., description="要修改的字段（只传需要改的）"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
@@ -301,7 +301,7 @@ async def update_map(
 
 @router.delete("/{map_id}", summary="删除地图")
 async def delete_map(
-        map_id: int,
+        map_id: int = ApiPath(..., description="地图ID"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):

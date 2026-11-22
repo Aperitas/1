@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body, Path
 from sqlmodel import Session, select
 from db.session import get_session
 from models.site import Site, StopMode
@@ -71,7 +71,7 @@ async def list_sites(
 
 @router.get("/{site_id}", summary="获取单个站点详情")
 async def get_site(
-        site_id: int,
+        site_id: int = Path(..., description="站点ID"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
@@ -86,8 +86,8 @@ async def get_site(
 
 @router.put("/{site_id}", summary="修改站点信息")
 async def update_site(
-        site_id: int,
-        data: SiteUpdate,
+        site_id: int = Path(..., description="站点ID"),
+        data: SiteUpdate = Body(..., description="要修改的字段（只传需要改的）"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
@@ -109,7 +109,7 @@ async def update_site(
 
 @router.delete("/{site_id}", summary="删除站点")
 async def delete_site(
-        site_id: int,
+        site_id: int = Path(..., description="站点ID"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):

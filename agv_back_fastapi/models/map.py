@@ -9,10 +9,15 @@ from models.car.map_link import CarMapLink
 
 
 class MapType(str, Enum):
-    """地图类型"""
-    TIANDITU = "tianditu"      # 天地图（矢量/影像瓦片）
-    GRID = "grid"              # 栅格地图
-    POINTCLOUD = "pointcloud"  # 点云地图
+    """地图类型
+
+    - TIANDITU(tianditu)：天地图（矢量/影像瓦片），需要用两个经纬度角点限定区域
+    - GRID(grid)：栅格地图，文件本身已包含经纬度信息
+    - POINTCLOUD(pointcloud)：点云地图，作为定位漂移/丢失时的兜底地图
+    """
+    TIANDITU = "tianditu"
+    GRID = "grid"
+    POINTCLOUD = "pointcloud"
 
 
 class Map(SQLModel, table=True):

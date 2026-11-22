@@ -9,10 +9,26 @@ from pydantic import BaseSettings, AnyHttpUrl
 import os
 
 project_desc = """
-    🎉 管理员接口汇总 🎉
-    ✨ 账号: admin ✨
-    ✨ 密码: 123456 ✨
-    ✨ 权限(scopes): admin ✨
+    🎉 AGV 调度系统后端接口 🎉
+    ✨ 演示账号: admin / 123456 ✨
+
+    【用户角色】
+    - admin：管理员，最高权限（用户 / 地图 / 路线 / 小车管理 + 调度指令）
+    - dispatcher：调度员，可查看数据并下发调度指令，不能修改资源
+    - guest：游客，只读（只能看到自己负责的地图及其下属数据）
+
+    【地图类型 map_type】
+    - tianditu：天地图，需要提供两个经纬度角点（lon_min/lat_min/lon_max/lat_max）
+    - grid：栅格地图，文件本身已包含经纬度
+    - pointcloud：点云地图，可作为定位漂移/丢失时的兜底地图（fallback_map_id）
+
+    【路线 / 临时路径】
+    - 普通路径 is_temp=false：同一车辆/地图可有多条
+    - 临时路径 is_temp=true：必须指定 car_id，且每辆车在每张地图内只能有一条（重复创建会自动覆盖）
+
+    【站点停靠模式 stop_mode】
+    - timed：等一段时间自动走（时长由 dwell_time 秒控制）
+    - wait_command：车端发命令才走（车端调用 POST /report/site_depart 或调度端下发 depart 指令）
 """
 
 

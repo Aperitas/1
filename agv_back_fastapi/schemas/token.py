@@ -10,13 +10,13 @@ from sqlmodel import SQLModel
 
 
 class Token(SQLModel):
-    """ token """
-    access_token: str
-    token_type: str
+    """ 登录返回的 token """
+    access_token: str = Field(..., description="JWT 访问令牌")
+    token_type: str = Field(..., description="令牌类型，固定为 bearer")
 
 
 class TokenInfo(UserIn):
-    """ token返回的user模型 """
-    id: Optional[int] = Field(default=None)
-    isAdmin: bool = Field(default=False)
+    """ 写入 JWT 的用户信息 """
+    id: Optional[int] = Field(default=None, description="用户ID")
+    isAdmin: bool = Field(default=False, description="是否管理员（兼容字段，实际以数据库 role 为准）")
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Body, Path
 from sqlmodel import Session, select
 from db.session import get_session
 from models.waypoint import Waypoint
@@ -51,7 +51,7 @@ async def list_waypoints(
 
 @router.get("/{wp_id}", summary="获取单个路径点详情")
 async def get_waypoint(
-        wp_id: int,
+        wp_id: int = Path(..., description="路径点ID"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
@@ -66,8 +66,8 @@ async def get_waypoint(
 
 @router.put("/{wp_id}", summary="修改路径点信息")
 async def update_waypoint(
-        wp_id: int,
-        data: WaypointUpdate,
+        wp_id: int = Path(..., description="路径点ID"),
+        data: WaypointUpdate = Body(..., description="要修改的字段（只传需要改的）"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
@@ -86,7 +86,7 @@ async def update_waypoint(
 
 @router.delete("/{wp_id}", summary="删除路径点")
 async def delete_waypoint(
-        wp_id: int,
+        wp_id: int = Path(..., description="路径点ID"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):

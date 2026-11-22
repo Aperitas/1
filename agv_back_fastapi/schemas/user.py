@@ -13,15 +13,15 @@ from models.user.users import UserRole
 
 class UserIn(SQLModel) :
     """ 共享模型字段 """
-    name: str
+    name: str = Field(..., description="账户名（登录用户名，全局唯一）")
 
 
 class UpdateUser(SQLModel) :
-    hashed_password: Optional[str] = Field(default=None,description="用户hash密码")
-    isActive: Optional[bool] = None
-    last_active_time: Optional[datetime] = None
-    nickname: Optional[str] = None
-    role: Optional[str] = Field(default=None,description="角色: admin/dispatcher/guest")
+    hashed_password: Optional[str] = Field(default=None,description="用户hash密码（服务端生成，前端无需传）")
+    isActive: Optional[bool] = Field(default=None,description="是否在线/启用：登录置 true，登出置 false")
+    last_active_time: Optional[datetime] = Field(default=None,description="最后活跃时间")
+    nickname: Optional[str] = Field(default=None,description="昵称（展示用，可与账户名不同）")
+    role: Optional[str] = Field(default=None,description="角色：admin=管理员 / dispatcher=调度员 / guest=游客")
     avatar: Optional[str] = Field(default=None,description="头像URL")
     # ===== 新增：用户默认地图ID（管理员更新用户时可修改） =====
     map_id: Optional[int] = Field(default=None, description="用户默认地图ID")
@@ -29,50 +29,51 @@ class UpdateUser(SQLModel) :
 
 
 class CreateUser(UpdateUser, UserIn):
-    password: str = Field(...,min_length=6,max_length=72,description="明文密码（6~72位）")
-    isActive: bool = False
+    password: str = Field(...,min_length=6,max_length=72,description="明文密码（6~72位，服务端 bcrypt 加密后入库）")
+    isActive: bool = Field(default=False,description="是否在线/启用")
     nickname: Optional[str] = Field(default=None,description="昵称，留空默认取账户名")
-    create_time: datetime = datetime.now()
-    isAdmin: bool = False  # 兼容字段：实际由 role 推导，服务端会忽略前端传值
-    role: UserRole = Field(default=UserRole.GUEST,description="角色: admin/dispatcher/guest")
-    code: Optional[str] = Field(default=None, max_length=6)  # 验证码也改为可选（因为已注释）
-    map_id: Optional[int] = Field(default=None, description="用户默认地图ID")
-    map_ids: Optional[List[int]] = Field(default=None, description="账户负责的地图ID列表（多对多）")
+    create_time: datetime = Field(default=datetime.now(),description="创建时间（服务端会覆盖为当前时间）")
+    isAdmin: bool = Field(default=False,description="兼容字段：实际由 role 推导，服务端忽略前端传值")
+    role: UserRole = Field(default=UserRole.GUEST,description="角色：admin=管理员 / dispatcher=调度员 / guest=游客")
+    code: Optional[str] = Field(default=None, max_length=6, description="邮箱验证码（暂未启用）")
+    map_id: Optional[int] = Field(default=None, description="默认地图ID（登录后默认打开的地图；不传则取 map_ids 第一个）")
+    map_ids: Optional[List[int]] = Field(default=None, description="账户负责的地图ID列表（决定该账户能看到哪些地图）")
 
 
 class OutputUser(UserIn) :
-    id: int
-    roles: Optional[List[str]] = None
-    role: Optional[str] = Field(default=None,description="角色: admin/dispatcher/guest")
+    """用户信息（返回结构，不含密码/邮箱/手机号）"""
+    id: int = Field(..., description="用户ID")
+    roles: Optional[List[str]] = Field(default=None, description="角色列表（兼容前端旧的 roles 字段）")
+    role: Optional[str] = Field(default=None,description="角色：admin=管理员 / dispatcher=调度员 / guest=游客")
     avatar: Optional[str] = Field(default=None,description="头像URL")
-    nickname: str
-    create_time: datetime
-    last_active_time: Optional[datetime] = None
-    isActive: bool = False
+    nickname: str = Field(..., description="昵称")
+    create_time: datetime = Field(..., description="创建时间")
+    last_active_time: Optional[datetime] = Field(default=None, description="最后活跃时间")
+    isActive: bool = Field(default=False, description="是否在线/启用")
     # ===== 新增：用户默认地图ID =====
-    map_id: Optional[int] = Field(default=None, description="用户默认地图ID")
+    map_id: Optional[int] = Field(default=None, description="默认地图ID（登录后默认打开的地图）")
     # ===============================
 
 from pydantic import BaseModel
 from typing import Optional
 
 class UserUpdate(BaseModel):
-    """管理员修改某个用户时使用的请求体"""
-    name: Optional[str] = None
-    nickname: Optional[str] = None
-    isActive: Optional[bool] = None
-    isAdmin: Optional[bool] = None
-    role: Optional[UserRole] = Field(default=None,description="角色: admin/dispatcher/guest")
-    avatar: Optional[str] = None
+    """管理员修改某个用户时使用的请求体（只传需要修改的字段）"""
+    name: Optional[str] = Field(default=None, description="账户名（唯一）")
+    nickname: Optional[str] = Field(default=None, description="昵称")
+    isActive: Optional[bool] = Field(default=None, description="是否在线/启用")
+    isAdmin: Optional[bool] = Field(default=None, description="兼容字段：true→role=admin，false→role=guest")
+    role: Optional[UserRole] = Field(default=None,description="角色：admin=管理员 / dispatcher=调度员 / guest=游客")
+    avatar: Optional[str] = Field(default=None, description="头像URL")
     # ===== 新增：用户默认地图ID（管理员更新用户时可修改） =====
-    map_id: Optional[int] = Field(default=None, description="用户默认地图ID")
-    map_ids: Optional[List[int]] = Field(default=None, description="账户负责的地图ID列表（多对多，传了就整体覆盖）")
+    map_id: Optional[int] = Field(default=None, description="默认地图ID（登录后默认打开的地图）")
+    map_ids: Optional[List[int]] = Field(default=None, description="账户负责的地图ID列表（传了就整体覆盖）")
     # ===========================================================
 
 
 class UserMapSetIn(BaseModel):
     """设置账户负责的地图（覆盖式）"""
-    map_ids: List[int] = []
+    map_ids: List[int] = Field(default=[], description="地图ID列表：传空数组表示解除全部关联")
 
 
 class ProfileUpdateIn(BaseModel):

@@ -10,24 +10,35 @@ from datetime import datetime
 from models.car.map_link import CarMapLink
 
 class CarStatus(int, Enum):
-    INACTIVATE = 0  # 关机或者ros系统没有开启时表示为关机状态
-    FREE = 1        # ros系统开启时，但没有分配任务，表示为空闲状态
-    WORKING = 2     # 当小车在执行任务时，表示为工作状态
+    """车辆状态（返回给前端的是整型值）
+
+    - 0 INACTIVATE：关机 / ROS 未启动
+    - 1 FREE：空闲（在线但未分配任务）
+    - 2 WORKING：执行任务中
+    - 3 PAUSE：已暂停
+    - 4 CHARGING：充电中
+    - 5 Fault：故障
+    """
+    INACTIVATE = 0
+    FREE = 1
+    WORKING = 2
     PAUSE = 3
-    CHARGING = 4    # 当小车处于充电状态时
-    Fault = 5       # 当小车异常时，表示为故障状态
+    CHARGING = 4
+    Fault = 5
+
 
 class Cars(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str
-    productor: Optional[str] = None
-    fault_reason: Optional[str] = None
-    description: Optional[str] = None
-    status: CarStatus = CarStatus.INACTIVATE
-    current_task_id: Optional[int] = None
-    ip: str
-    port: str
-    weight: float
+    """小车（AGV）信息"""
+    id: Optional[int] = Field(default=None, primary_key=True, description="车辆ID")
+    name: str = Field(..., description="车辆名称")
+    productor: Optional[str] = Field(default=None, description="厂商")
+    fault_reason: Optional[str] = Field(default=None, description="故障原因（status=Fault 时有值）")
+    description: Optional[str] = Field(default=None, description="备注")
+    status: CarStatus = Field(default=CarStatus.INACTIVATE, description="状态：0关机/1空闲/2工作中/3暂停/4充电/5故障")
+    current_task_id: Optional[int] = Field(default=None, description="当前任务ID（历史字段，目前用于记录正在执行的路线ID）")
+    ip: str = Field(..., description="车端 IP")
+    port: str = Field(..., description="车端端口")
+    weight: float = Field(..., description="载重（kg）")
 
     # 真实GPS经纬度（车端上报）
     lon: Optional[float] = Field(default=113.9686, description="经度，南科大基准")

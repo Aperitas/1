@@ -1,6 +1,6 @@
 import os
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Path as ApiPath
 from fastapi.responses import Response
 from core.config import settings
 
@@ -16,7 +16,12 @@ SUBDOMAINS = [f"t{i}" for i in range(8)]
 client = httpx.AsyncClient(timeout=10.0)
 
 @router.get("/tiles/{layer}/{z}/{x}/{y}.png", summary="天地图瓦片代理")
-async def map_tile(layer: str, z: int, x: int, y: int) -> Response:
+async def map_tile(
+    layer: str = ApiPath(..., description="图层：vec=矢量底图 / cva=矢量注记 / img=影像底图 / cia=影像注记"),
+    z: int = ApiPath(..., description="缩放级别（1~18）"),
+    x: int = ApiPath(..., description="瓦片列号"),
+    y: int = ApiPath(..., description="瓦片行号"),
+) -> Response:
     """天地图瓦片代理：由服务端携带 Key 向上游请求瓦片并缓存 7 天，前端无需暴露 Key。"""
     upstream_layer = LAYERS.get(layer)
     # 限制只允许 vec 和 cva 图层，且 z 范围 1-18

@@ -6,9 +6,13 @@ from datetime import datetime
 
 
 class StopMode(str, Enum):
-    """站点停靠模式"""
-    TIMED = "timed"                # 等一段时间自动走（类似地铁/公交）
-    WAIT_COMMAND = "wait_command"  # 车端发命令才走（类似观光车）
+    """站点停靠模式
+
+    - TIMED(timed)：等一段时间自动走（类似地铁），时长由 dwell_time 控制
+    - WAIT_COMMAND(wait_command)：车端发命令才走（类似观光车/有人值守）
+    """
+    TIMED = "timed"
+    WAIT_COMMAND = "wait_command"
 
 
 class Site(SQLModel, table=True):

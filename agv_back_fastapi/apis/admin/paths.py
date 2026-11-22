@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Body, Path as ApiPath
 from sqlmodel import Session, select
 from db.session import get_session
 from models.path import Path
@@ -129,7 +129,7 @@ async def list_paths(
 
 @router.get("/{path_id}", summary="获取单条路线详情（含完整节点坐标）")
 async def get_path(
-        path_id: int,
+        path_id: int = ApiPath(..., description="路线ID"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
@@ -146,8 +146,8 @@ async def get_path(
 
 @router.put("/{path_id}", summary="修改路线（名称、类型、节点序列等）")
 async def update_path(
-        path_id: int,
-        data: PathUpdate,
+        path_id: int = ApiPath(..., description="路线ID"),
+        data: PathUpdate = Body(..., description="要修改的字段（只传需要改的）"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
@@ -183,7 +183,7 @@ async def update_path(
 
 @router.delete("/{path_id}", summary="删除路线")
 async def delete_path(
-        path_id: int,
+        path_id: int = ApiPath(..., description="路线ID"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):

@@ -113,7 +113,7 @@ async def change_my_password(data: PasswordChangeIn,user: Users = Depends(get_cu
 
 
 @profile_api.post("/avatar", summary="上传头像")
-async def upload_avatar(file: UploadFile = File(...),user: Users = Depends(get_current_user)) :
+async def upload_avatar(file: UploadFile = File(..., description="头像文件（png/jpg/jpeg/gif/webp，≤2MB）"),user: Users = Depends(get_current_user)) :
     """ 上传头像（png/jpg/jpeg/gif/webp，≤2MB），保存到 static/avatars 并写回用户资料 """
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED_AVATAR_SUFFIX :

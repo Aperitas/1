@@ -11,7 +11,7 @@ from fastapi import (
     Depends
 )
 from fastapi_mail import FastMail,MessageSchema,ConnectionConfig
-from pydantic import EmailStr,BaseModel
+from pydantic import EmailStr,BaseModel,Field
 from sqlmodel import select,update
 
 from apis.oauth import oauth_api
@@ -33,11 +33,14 @@ class EmailSchema(BaseModel) :
     email: List[EmailStr]
 
 class NewPassword(BaseModel):
-    password:str
+    """重置密码时提交的新密码（旧邮箱找回流程使用）"""
+    password: str = Field(..., description="新密码（6~72位）")
+
 
 class EmailValidForm(BaseModel) :
-    email: EmailStr
-    valid_code: str
+    """邮箱验证码校验表单"""
+    email: EmailStr = Field(..., description="邮箱地址")
+    valid_code: str = Field(..., description="6 位邮箱验证码")
 
 
 fake = Faker()

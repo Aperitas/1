@@ -17,7 +17,7 @@ from schemas.user import UserIn,UpdateUser
 from utils.custom_exc import UserNotExist
 from utils.resp_code import resp_200,resp_500
 
-test_api = APIRouter(tags=['test'])
+test_api = APIRouter(tags=['测试接口'])
 
 
 @test_api.post('/', summary="测试接口：校验用户名并返回 token")

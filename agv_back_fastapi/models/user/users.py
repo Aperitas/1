@@ -12,10 +12,15 @@ from models.user.map_link import UserMapLink
 
 
 class UserRole(str,Enum) :
-    """ 用户角色 """
-    ADMIN = "admin"            # 管理：最高权限（用户/地图/线路/小车管理 + 调度）
-    DISPATCHER = "dispatcher"  # 调度：可查看全部信息 + 下发调度指令
-    GUEST = "guest"            # 游客：仅可查看地图/线路等信息
+    """ 用户角色
+
+    - ADMIN(admin)：管理员，最高权限（用户/地图/线路/小车管理 + 调度指令）
+    - DISPATCHER(dispatcher)：调度员，可查看数据并下发调度指令，不能改动资源
+    - GUEST(guest)：游客，只能查看（仅限其负责/关联的地图）
+    """
+    ADMIN = "admin"
+    DISPATCHER = "dispatcher"
+    GUEST = "guest"
 
 
 class Users(SQLModel,table=True) :
