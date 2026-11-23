@@ -4,6 +4,7 @@
 from typing import Dict, List
 
 from models.car.car import Cars
+from utils.video_streams import parse_streams
 
 
 def car_payload(car: Cars, map_ids: List[int], map_names: Dict[int, str]) -> dict :
@@ -19,6 +20,7 @@ def car_payload(car: Cars, map_ids: List[int], map_names: Dict[int, str]) -> dic
         "lon" : car.lon,
         "lat" : car.lat,
         "battery" : car.battery,
+        "video_streams" : parse_streams(car.video_streams),
         "map_ids" : map_ids,
         "maps" : [{"id" : mid,"name" : map_names.get(mid)} for mid in map_ids],
     }

@@ -1,5 +1,4 @@
 import datetime
-import json
 from typing import Optional, List, Dict
 from schemas.car_command import CarCommandIn, ControlModeIn, CarMapSetIn
 from fastapi import APIRouter, Depends, Query, Body, Path as ApiPath
@@ -16,6 +15,7 @@ from models.path import Path
 from models.user.users import Users
 from apis.access import visible_map_ids
 from apis.views import car_payload
+from utils.video_streams import dump_streams, parse_streams
 from utils.resp_code import resp_200, resp_500, resp_400
 from apis.websocket.process import manager
 from pydantic import BaseModel, Field
@@ -54,20 +54,19 @@ def _replace_car_maps(session: Session, car_id: int, map_ids: List[int]) -> None
 
 
 # ===== 视频流辅助函数 =====
-def _parse_video_streams(raw: Optional[str]) -> Dict[str, str]:
-    """把数据库中的 video_streams（JSON 字符串）解析成字典；为空或非法时返回 {} """
-    if not raw:
-        return {}
-    try:
-        data = json.loads(raw)
-    except (ValueError, TypeError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _dump_video_streams(streams: Dict[str, str]) -> str:
-    """把视频流字典序列化为 JSON 字符串（URL 原样保存）"""
-    return json.dumps(streams or {}, ensure_ascii=False)
+def _check_stream_url_conflict(session: Session, streams: Dict[str, str],
+                               exclude_car_id: Optional[int] = None) -> Optional[str]:
+    """检查视频流地址是否已被其他车辆占用，返回错误信息或 None"""
+    urls = {url for url in (streams or {}).values() if url}
+    if not urls:
+        return None
+    for other in session.exec(select(Cars)).all():
+        if exclude_car_id is not None and other.id == exclude_car_id:
+            continue
+        duplicated = urls & set(parse_streams(other.video_streams).values())
+        if duplicated:
+            return f"该视频流地址已被车辆 {other.id} 使用: {sorted(duplicated)[0]}"
+    return None
 
 
 class VideoStreamsIn(BaseModel):
@@ -87,6 +86,10 @@ class CarCreateIn(BaseModel):
     ip: Optional[str] = Field(default="192.168.1.100", description="车端 IP")
     port: Optional[str] = Field(default="9090", description="车端端口")
     map_ids: Optional[List[int]] = Field(default=None, description="车辆所属地图ID列表（可多选）")
+    video_streams: Optional[Dict[str, str]] = Field(
+        default=None,
+        description='视频流字典，如 {"front": "http://39.108.77.178:6010/front"}；不传则为空',
+    )
 
 @car_api.post("/create", summary="新增小车")
 async def create_car(
@@ -105,6 +108,10 @@ async def create_car(
     if error:
         return resp_400(msg=error)
 
+    error = _check_stream_url_conflict(session, data.video_streams or {})
+    if error:
+        return resp_400(msg=error)
+
     try:
         # 创建新小车，所有轨迹数据默认给 0 或 100
         new_car = Cars(
@@ -119,7 +126,7 @@ async def create_car(
             yaw=0.0,
             speed=0.0,
             battery=100.0,
-            video_streams="{}",
+            video_streams=dump_streams(data.video_streams),
             control_mode="AUTO"         # 默认自动模式
         )
         session.add(new_car)
@@ -132,7 +139,11 @@ async def create_car(
             session.commit()
 
         logger.info(f"管理员 {user.name} 新增了一台小车: {data.name} (ID: {new_car.id}, 地图: {map_ids})")
-        return resp_200(msg="小车创建成功", data={"car_id": new_car.id, "map_ids": map_ids})
+        return resp_200(msg="小车创建成功", data={
+            "car_id": new_car.id,
+            "map_ids": map_ids,
+            "video_streams": parse_streams(new_car.video_streams),
+        })
     except Exception as e:
         session.rollback()
         logger.error(f"创建小车失败: {e}")
@@ -149,6 +160,10 @@ class CarUpdateIn(BaseModel):
     status: Optional[int] = Field(default=None, description="状态：0关机/1空闲/2工作中/3暂停/4充电/5故障")
     description: Optional[str] = Field(default=None, description="备注")
     map_ids: Optional[List[int]] = Field(default=None, description="车辆所属地图ID列表（传了就整体覆盖，传 [] 表示解除全部）")
+    video_streams: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="视频流字典（传了就整体覆盖，传 {} 表示清空）",
+    )
 
 @car_api.put("/{car_id}/update", summary="修改小车信息")
 async def update_car(
@@ -171,6 +186,11 @@ async def update_car(
         # 遍历传入的字段并更新；map_ids 不是 Cars 的列，单独处理
         update_data = data.dict(exclude_unset=True)
         new_map_ids = update_data.pop("map_ids", None)
+        new_streams = update_data.pop("video_streams", None)
+        if new_streams:
+            error = _check_stream_url_conflict(session, new_streams, exclude_car_id=car.id)
+            if error:
+                return resp_400(msg=error)
         if new_map_ids is not None:
             new_map_ids, error = _validate_map_ids(session, new_map_ids)
             if error:
@@ -185,6 +205,8 @@ async def update_car(
             else:
                 setattr(car, key, value)
                 
+        if new_streams is not None:
+            car.video_streams = dump_streams(new_streams)
         session.add(car)
         session.commit()
         session.refresh(car)
@@ -195,6 +217,7 @@ async def update_car(
 
         result = car.dict()
         result["map_ids"] = _get_car_map_ids(session, car.id)
+        result["video_streams"] = parse_streams(car.video_streams)
         logger.info(f"管理员 {user.name} 修改了小车 {car_id} 的信息")
         return resp_200(msg="小车信息修改成功", data=result)
     except Exception as e:
@@ -311,7 +334,7 @@ async def get_car_video_streams(
     car = session.get(Cars, car_id)
     if not car:
         return resp_400(msg="小车不存在")
-    return resp_200(data=_parse_video_streams(car.video_streams))
+    return resp_200(data=parse_streams(car.video_streams))
 
 
 @car_api.put("/{car_id}/video_streams", summary="更新车辆视频流地址（仅管理员）")
@@ -331,8 +354,12 @@ async def update_car_video_streams(
     if not car:
         return resp_400(msg="小车不存在")
 
+    error = _check_stream_url_conflict(session, data.streams, exclude_car_id=car_id)
+    if error:
+        return resp_400(msg=error)
+
     try:
-        car.video_streams = _dump_video_streams(data.streams)
+        car.video_streams = dump_streams(data.streams)
         session.add(car)
         session.commit()
         session.refresh(car)
@@ -342,7 +369,7 @@ async def update_car_video_streams(
         return resp_500(msg=f"更新车辆视频流失败: {str(e)}")
 
     logger.info(f"管理员 {user.name} 更新了小车 {car_id} 的视频流: {car.video_streams}")
-    return resp_200(data=_parse_video_streams(car.video_streams), msg="视频流更新成功")
+    return resp_200(data=parse_streams(car.video_streams), msg="视频流更新成功")
 
 
 @car_api.delete("/{car_id}", summary="删除小车")

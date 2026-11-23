@@ -6,9 +6,9 @@ from schemas.position import CarReportIn
 from schemas.car_command import SiteDepartIn
 from utils.resp_code import resp_200, resp_400
 from datetime import datetime
-import json
 from core.logger import logger
 from apis.websocket.process import manager
+from utils.video_streams import merge_streams
 
 router = APIRouter(prefix="/report", tags=["车端上报"])
 
@@ -25,7 +25,9 @@ async def car_status_report(data: CarReportIn, session: Session = Depends(get_se
     car.yaw = data.yaw
     car.speed = data.speed
     car.battery = data.battery
-    car.video_streams = json.dumps(data.video_streams)  # 存为JSON字符串
+    # 视频流：只有车端真的上报了才合并，避免空值覆盖管理员配置、或冲掉其他视角
+    if data.video_streams:
+        car.video_streams = merge_streams(car.video_streams, data.video_streams)
     car.last_heartbeat = datetime.now()
 
     session.add(car)
