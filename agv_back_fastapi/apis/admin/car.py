@@ -1,5 +1,6 @@
 import datetime
-from typing import Optional, List
+import json
+from typing import Optional, List, Dict
 from schemas.car_command import CarCommandIn, ControlModeIn, CarMapSetIn
 from fastapi import APIRouter, Depends, Query, Body, Path as ApiPath
 from sqlmodel import Session, select, delete
@@ -50,6 +51,31 @@ def _replace_car_maps(session: Session, car_id: int, map_ids: List[int]) -> None
     session.execute(delete(CarMapLink).where(CarMapLink.car_id == car_id))
     for map_id in map_ids:
         session.add(CarMapLink(car_id=car_id, map_id=map_id))
+
+
+# ===== 视频流辅助函数 =====
+def _parse_video_streams(raw: Optional[str]) -> Dict[str, str]:
+    """把数据库中的 video_streams（JSON 字符串）解析成字典；为空或非法时返回 {} """
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _dump_video_streams(streams: Dict[str, str]) -> str:
+    """把视频流字典序列化为 JSON 字符串（URL 原样保存）"""
+    return json.dumps(streams or {}, ensure_ascii=False)
+
+
+class VideoStreamsIn(BaseModel):
+    """更新车辆视频流地址的请求体（仅管理员）"""
+    streams: Dict[str, str] = Field(
+        default={},
+        description="视频流字典：键=视角名（如 front/back），值=播放地址（如 http://39.108.77.178:6010/front）",
+    )
 
 
 # ===== 定义接收前端传来的小车数据结构 =====
@@ -269,6 +295,54 @@ async def set_car_maps(
         return resp_500(msg="设置车辆所属地图失败")
     logger.info(f"管理员 {user.name} 设置小车 {car_id} 的所属地图为 {map_ids}")
     return resp_200(data={"car_id": car_id, "map_ids": map_ids}, msg="设置成功")
+
+
+@car_api.get("/{car_id}/video_streams", summary="获取车辆视频流地址")
+async def get_car_video_streams(
+    car_id: int = ApiPath(..., description="车辆ID"),
+    session: Session = Depends(get_session),
+    user: Users = Depends(get_current_user)
+):
+    """读取数据库中的 video_streams（JSON 字符串）并解析成字典返回。
+
+    返回示例：{"front": "http://39.108.77.178:6010/front"}
+    字段为空或历史数据格式非法时返回 {}。
+    """
+    car = session.get(Cars, car_id)
+    if not car:
+        return resp_400(msg="小车不存在")
+    return resp_200(data=_parse_video_streams(car.video_streams))
+
+
+@car_api.put("/{car_id}/video_streams", summary="更新车辆视频流地址（仅管理员）")
+async def update_car_video_streams(
+    car_id: int = ApiPath(..., description="车辆ID"),
+    data: VideoStreamsIn = Body(..., description="视频流字典，如 {streams: {front: http://39.108.77.178:6010/front}}"),
+    session: Session = Depends(get_session),
+    user: Users = Depends(get_current_admin)
+):
+    """把前端传来的视频流字典序列化为 JSON 字符串后写入 video_streams 字段。
+
+    - 仅管理员可调用（非管理员返回 403）；
+    - 传 {} 表示清空；
+    - 返回更新后的字典。
+    """
+    car = session.get(Cars, car_id)
+    if not car:
+        return resp_400(msg="小车不存在")
+
+    try:
+        car.video_streams = _dump_video_streams(data.streams)
+        session.add(car)
+        session.commit()
+        session.refresh(car)
+    except Exception as e:
+        session.rollback()
+        logger.error(f"更新车辆视频流失败: {e}")
+        return resp_500(msg=f"更新车辆视频流失败: {str(e)}")
+
+    logger.info(f"管理员 {user.name} 更新了小车 {car_id} 的视频流: {car.video_streams}")
+    return resp_200(data=_parse_video_streams(car.video_streams), msg="视频流更新成功")
 
 
 @car_api.delete("/{car_id}", summary="删除小车")
