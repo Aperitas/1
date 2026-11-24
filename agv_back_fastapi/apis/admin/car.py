@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 from typing import Optional, List, Dict
 from schemas.car_command import CarCommandIn, ControlModeIn, CarMapSetIn
@@ -16,14 +17,18 @@ from models.path import Path
 from models.user.users import Users
 from apis.access import visible_map_ids
 from apis.views import car_payload
+from utils.coords import get_transform
 from utils.video_streams import dump_streams, parse_streams
 from utils.patch import blank_to_none, clean_update
-from apis.api_docs import CAR_POINTS
+from apis.api_docs import CAR_MANIFEST, CAR_POINTS
 from utils.resp_code import resp_200, resp_500, resp_400
 from apis.websocket.process import manager
 from pydantic import BaseModel, Field, validator
 
 car_api = APIRouter(prefix='/cars')
+
+# 静态地图目录（manifest 里拼 ROS 地图路径用，与 maps.py 保持一致）
+MAP_UPLOAD_DIR = os.path.join("static", "maps")
 
 
 # ===== 车辆-地图关联辅助函数 =====
@@ -254,6 +259,131 @@ async def update_car(
         session.rollback()
         logger.error(f"修改小车信息失败: {e}")
         return resp_500(msg=f"修改失败: {str(e)}")
+
+@car_api.get("/{car_id}/manifest", summary="车端同步清单（绑定地图的文件地址 + 可用路线）", description=CAR_MANIFEST)
+async def get_car_manifest(
+        car_id: int = ApiPath(..., description="车辆ID"),
+        session: Session = Depends(get_session),
+        user: Users = Depends(get_current_user)
+):
+    """车端客户端启动/定时调用：一次拿到「该车绑定地图的文件信息」和「可见路线列表」。
+
+    - `car`：车辆基本信息 + 当前点云位姿（pc_*）；
+    - `maps`：车绑定的地图，含 `grid`（PNG 地址/大小/mtime/宽高/分辨率/翻转）、
+      `pointcloud`（PCD 地址/大小/时间）、`ros_map`（导出过才有）、`transform`；
+    - `paths`：该车可见地图下的路线（带 `node_count`，便于判断缓存是否过期）。
+
+    车端建议流程：对比本地缓存的 `size + mtime` 决定是否重新下载 `/static/maps/...`；
+    执行任务时再调 `GET /api/cars/{car_id}/paths/{path_id}/points?frame=pc`。
+    """
+    car = session.get(Cars, car_id)
+    if not car:
+        return resp_400(msg="小车不存在")
+
+    def _file_info(path):
+        """磁盘文件 -> {url, size, mtime}；不存在返回 None"""
+        if not path or not os.path.exists(path):
+            return None
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        return {
+            "url": _map_file_url(path),
+            "size": st.st_size,
+            "mtime": datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+
+    visible = visible_map_ids(session, user)
+    car_map_ids = _get_car_map_ids(session, car_id)
+    if visible is not None:
+        car_map_ids = [mid for mid in car_map_ids if mid in visible]
+
+    maps_payload = []
+    for map_id in car_map_ids:
+        map_obj = session.get(Map, map_id)
+        if map_obj is None:
+            continue
+
+        grid_info = _file_info(map_obj.grid_file_path) or {}
+        grid_info.update({
+            "width": map_obj.grid_width,
+            "height": map_obj.grid_height,
+            "resolution": map_obj.grid_resolution,
+            "flip_x": bool(map_obj.grid_flip_x),
+            "flip_y": bool(map_obj.grid_flip_y),
+            "grid_origin_x": map_obj.grid_origin_x,
+            "grid_origin_y": map_obj.grid_origin_y,
+        })
+
+        pc_info = _file_info(map_obj.pointcloud_file_path) or {}
+        pc_info.update({"type": map_obj.pointcloud_file_type, "points": map_obj.pointcloud_point_count})
+
+        ros_map = None
+        ros_yaml = os.path.join(MAP_UPLOAD_DIR, "map_%d_ros.yaml" % map_id)
+        ros_pgm = os.path.join(MAP_UPLOAD_DIR, "map_%d_ros.pgm" % map_id)
+        if os.path.exists(ros_yaml) and os.path.exists(ros_pgm):
+            ros_map = {"yaml_url": _map_file_url(ros_yaml), "pgm_url": _map_file_url(ros_pgm)}
+
+        bounds = None
+        if None not in (map_obj.lon_min, map_obj.lat_min, map_obj.lon_max, map_obj.lat_max):
+            bounds = {
+                "left_top": {"lon": map_obj.lon_min, "lat": map_obj.lat_max},
+                "right_bottom": {"lon": map_obj.lon_max, "lat": map_obj.lat_min},
+            }
+
+        maps_payload.append({
+            "id": map_obj.id,
+            "name": map_obj.name,
+            "map_type": map_obj.map_type,
+            "center_lon": map_obj.center_lon,
+            "center_lat": map_obj.center_lat,
+            "zoom": map_obj.zoom,
+            "bounds": bounds,
+            "grid": grid_info,
+            "pointcloud": pc_info,
+            "ros_map": ros_map,
+            "transform": get_transform(map_obj),
+        })
+
+    paths_payload = []
+    query = select(Path)
+    query = query.where(Path.map_id.in_(car_map_ids)) if car_map_ids else query.where(Path.id == -1)
+    for path in session.exec(query).all():
+        try:
+            nodes = json.loads(path.node_chain or "[]")
+        except Exception:
+            nodes = []
+        paths_payload.append({
+            "id": path.id,
+            "name": path.name,
+            "path_type": path.path_type,
+            "map_id": path.map_id,
+            "map_type": path.map_type,
+            "car_id": path.car_id,
+            "is_temp": bool(path.is_temp),
+            "node_count": len(nodes) if isinstance(nodes, list) else 0,
+        })
+
+    return resp_200(data={
+        "car": {
+            "car_id": car.id,
+            "name": car.name,
+            "control_mode": car.control_mode,
+            "status": car.status,
+            "last_heartbeat": car.last_heartbeat,
+            "pc_map_id": car.pc_map_id,
+            "pc_x": car.pc_x,
+            "pc_y": car.pc_y,
+            "pc_z": car.pc_z,
+            "pc_roll": car.pc_roll,
+            "pc_pitch": car.pc_pitch,
+            "pc_yaw": car.pc_yaw,
+        },
+        "maps": maps_payload,
+        "paths": paths_payload,
+    })
+
 
 @car_api.get("/{car_id}/paths/{path_id}/points", summary="车端取路线坐标（默认点云米制）", description=CAR_POINTS)
 async def get_car_path_points(

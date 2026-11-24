@@ -806,6 +806,31 @@ const { px, py } = (await api.get(`/admin/maps/${car.pc_map_id}/coords?x=${car.p
   "pc_map_id": 1, "pc_x": 0.05, "pc_y": -0.05, "pc_yaw": 0.0,
   "speed": 0.5, "battery": 80 }
 ```
+### 20.5 完整 6DoF 位姿（v2）
+
+车端还可以上报完整位姿，字段全部可选：
+
+| 字段 | 单位 | 说明 |
+|---|---|---|
+| `pc_x` / `pc_y` / `pc_z` | 米 | 点云坐标；`pc_z` 相对点云原点（**不是海拔**） |
+| `pc_roll` / `pc_pitch` / `pc_yaw` | 度 | 欧拉角，右手系；`pc_yaw` 为 `+x` 轴 0、逆时针为正 |
+
+规则：
+
+- **逐字段合并**：本次没传的字段保持上一次的值，不会被清零；
+- `pc_roll/pc_pitch/pc_yaw` 超出 `(-180, 180]` 会自动归一（190 → -170）；
+- `pc_z` 超出 `[-1000, 1000]` 米返回 400；
+- 只报 `lon/lat/yaw` 时，只能换算 `pc_x/pc_y/pc_yaw`，`pc_z` 与 `roll/pitch` **保持原值**（2D 经纬度算不出姿态）。
+
+用途对照：
+
+| 用途 | 需要的字段 |
+|---|---|
+| 栅格/点云俯视图上画车 + 朝向箭头 | `pc_x` `pc_y` `pc_yaw` |
+| 3D 点云里摆车模（含坡度、姿态） | `pc_x/y/z` + `pc_roll/pitch/yaw` |
+| 车端导航（下发路径） | 只需 `pc_x` `pc_y` |
+
+
 ## 21. 导出 ROS 地图（map_server / AMCL 用）
 
 ```http
@@ -913,4 +938,67 @@ GET  /admin/maps/{id}/coords?px=0&py=0                # flip_y 后应变成 (min
 
 - `scale_ratio` 偏离 1 超过 5% 时 `warnings` 会提示：说明 `bounds` 与实际尺寸对不上（图被拖过或没填对）；
 - 翻转不会影响车端：车端用的是 `points?frame=pc`（点云米制），与图像方向无关。
+
+
+## 23. 车端同步清单与客户端
+
+### 23.1 `GET /api/cars/{car_id}/manifest`
+
+车端启动/定时调用一次，就能知道「要下哪些地图文件」和「有哪些路线」：
+
+```json
+{
+  "car": { "car_id": 4, "name": "轮椅", "control_mode": "AUTO", "status": 1,
+           "pc_map_id": 1, "pc_x": 1.5, "pc_y": -2.5, "pc_z": 0.35,
+           "pc_roll": 2.0, "pc_pitch": -1.5, "pc_yaw": 45.0 },
+  "maps": [{
+    "id": 1, "name": "轮椅场地", "map_type": "local",
+    "center_lon": 113.96874, "center_lat": 22.60414, "zoom": 19,
+    "bounds": { "left_top": {"lon": 113.9686, "lat": 22.6043},
+                "right_bottom": {"lon": 113.96896, "lat": 22.6041} },
+    "grid": { "url": "/static/maps/map_1_grid_auto_0_1m.png", "size": 983,
+              "mtime": "2026-11-25T03:22:26", "width": 99, "height": 99,
+              "resolution": 0.1, "flip_x": false, "flip_y": false,
+              "grid_origin_x": -4.95, "grid_origin_y": 4.95 },
+    "pointcloud": { "url": "/static/maps/map_1_pc_x_down.pcd", "size": 121212, "type": "pcd", "points": 10100 },
+    "ros_map": { "yaml_url": "/static/maps/map_1_ros.yaml", "pgm_url": "/static/maps/map_1_ros.pgm" },
+    "transform": { "mode": "grid", "affine": [0.1, 0, -4.95, 0, -0.1, 4.95], "scale": 0.1 }
+  }],
+  "paths": [
+    { "id": 3, "name": "A-B", "path_type": "折线", "map_id": 1, "map_type": "local",
+      "car_id": null, "is_temp": false, "node_count": 3 }
+  ]
+}
+```
+
+- 文件地址是**相对路径**，拼 `server + url` 即可下载（`/static/maps/*` 公开，不需要 token）；
+- 用 `size + mtime` 判断是否需要重新下载；`node_count` 变化才需要重新拉 `points`；
+- `ros_map` 只在导出过 ROS 地图（§21）后才出现。
+
+### 23.2 车端客户端（单服务）
+
+`agv_client/` 把原来的 `main.py` / `forwarder_node.py` / `command_listener.py` 合并成一个常驻服务：
+
+```
+agv_client/
+  __main__.py    # python3 -m agv_client --config client.json
+  config.py      # JSON 配置 + AGV_* 环境变量覆盖
+  api.py         # 登录/token 刷新、上报、manifest、points、文件下载
+  sync.py        # 地图文件缓存（size+mtime）
+  reporter.py    # 0.5s 上报（含 6DoF 位姿）
+  commands.py    # WS 指令通道（注册/回执/重连）
+  runner.py      # start/stop/pause/resume/depart
+  ros_bridge.py  # 可选 ROS：/amcl_pose 或 /odom → 发 nav_msgs/Path
+  state.py       # 线程安全状态
+```
+
+```bash
+cp client.json.example client.json    # 改 server / car_id / 密码 / video_streams
+python3 -m agv_client --config client.json --once   # 自检：登录+清单+下载+上报一次
+python3 -m agv_client --config client.json          # 常驻（systemd 托管）
+```
+
+- 没有 roscore 时自动降级为「只上报 + 只打印指令」；
+- 执行 `start` 时才会 `GET /api/cars/{id}/paths/{pid}/points?frame=pc` 拉坐标；
+- 导航栈消费 `ros_path_topic`（默认 `/agv/path`，`nav_msgs/Path`），停车发 `/agv/stop` + `/cmd_vel` 零速。
 

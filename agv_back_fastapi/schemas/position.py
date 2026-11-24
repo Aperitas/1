@@ -47,6 +47,9 @@ class CarReportIn(SQLModel):
     )
     pc_x: Optional[float] = Field(default=None, description="点云坐标 X（米）")
     pc_y: Optional[float] = Field(default=None, description="点云坐标 Y（米）")
+    pc_z: Optional[float] = Field(default=None, description="点云坐标 Z（米，相对点云原点；范围 -1000~1000）")
+    pc_roll: Optional[float] = Field(default=None, description="横滚角 roll（度，右手系；超出 (-180,180] 会被归一）")
+    pc_pitch: Optional[float] = Field(default=None, description="俯仰角 pitch（度，右手系；超出 (-180,180] 会被归一）")
     pc_yaw: Optional[float] = Field(
         default=None,
         description="点云坐标系下的航向角（度，+x 轴为 0，逆时针为正）；不传时用经纬度航向换算",

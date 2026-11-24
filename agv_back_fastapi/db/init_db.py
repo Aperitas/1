@@ -16,7 +16,8 @@ _COLUMN_MIGRATIONS = {
     "sites": {"stop_mode": "VARCHAR DEFAULT 'timed'", "pc_x": "FLOAT", "pc_y": "FLOAT"},
     "waypoints": {"pc_x": "FLOAT", "pc_y": "FLOAT"},
     "paths": {"is_temp": "BOOLEAN DEFAULT 0", "map_type": "VARCHAR DEFAULT 'tianditu'"},
-    "cars": {"pc_map_id": "INTEGER", "pc_x": "FLOAT", "pc_y": "FLOAT", "pc_yaw": "FLOAT"},
+    "cars": {"pc_map_id": "INTEGER", "pc_x": "FLOAT", "pc_y": "FLOAT", "pc_yaw": "FLOAT",
+             "pc_z": "FLOAT", "pc_roll": "FLOAT", "pc_pitch": "FLOAT"},
     "maps": {
         "map_type": "VARCHAR DEFAULT 'tianditu'",
         "lon_min": "FLOAT", "lat_min": "FLOAT", "lon_max": "FLOAT", "lat_max": "FLOAT",
