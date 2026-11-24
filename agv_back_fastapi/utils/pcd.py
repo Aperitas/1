@@ -242,3 +242,47 @@ def build_grid(xyz: np.ndarray, resolution: float = 0.05, mode: str = "occupancy
     rgba[total > 0] = (255, 255, 255, 255)
     rgba[occ > 0] = (25, 25, 25, 255)
     return rgba.reshape(height, width, 4), meta
+def build_grid_in_frame(xyz: np.ndarray, origin_x: float, origin_y: float,
+                        width: int, height: int, resolution: float,
+                        z_low: float = 0.15, z_high: float = 1.8) -> np.ndarray:
+    """把点云投影进「已有栅格帧」，输出 ROS map_server 语义的灰度图
+
+    - 栅格帧由地图记录给出：左上角 (origin_x, origin_y)、宽高、分辨率（米/像素）；
+    - 返回 (height, width) uint8：**0=占用、254=空闲、205=未知**（ROS 约定）；
+    - 第 0 行 = 北（max y），第 0 列 = 西（min x），与 map_server 的读图约定一致。
+    """
+    pts = xyz[np.isfinite(xyz).all(axis=1)]
+    if len(pts) == 0:
+        raise ValueError("点云为空")
+    if resolution <= 0:
+        raise ValueError("resolution 必须大于 0")
+    if width <= 0 or height <= 0:
+        raise ValueError("栅格宽高必须大于 0")
+
+    z_floor = float(np.percentile(pts[:, 2], 5))
+    cols = np.clip(((pts[:, 0] - origin_x) / resolution).astype(np.int64), 0, width - 1)
+    rows = np.clip(((origin_y - pts[:, 1]) / resolution).astype(np.int64), 0, height - 1)
+    flat = rows * width + cols
+    cells = int(width) * int(height)
+
+    total = np.bincount(flat, minlength=cells)
+    z = pts[:, 2] - z_floor
+    band = (z >= float(z_low)) & (z <= float(z_high))
+    occ = np.bincount(flat[band], minlength=cells) if bool(band.any()) else np.zeros(cells, dtype=np.int64)
+
+    img = np.full(cells, 205, dtype=np.uint8)   # 未知（没有点落在该格）
+    img[total > 0] = 254                        # 有地面点 -> 空闲
+    img[occ > 0] = 0                            # 高度带内有障碍点 -> 占用
+    return img.reshape(int(height), int(width))
+
+
+def write_pgm(path: str, img: np.ndarray) -> None:
+    """写 P5 二进制 PGM（ROS map_server 可直接读取，灰度 0~255）"""
+    data = np.ascontiguousarray(img, dtype=np.uint8)
+    if data.ndim != 2:
+        raise ValueError("write_pgm 只接受二维灰度数组")
+    h, w = data.shape
+    header = ("P5\n%d %d\n255\n" % (w, h)).encode("ascii")
+    with open(path, "wb") as f:
+        f.write(header)
+        f.write(data.tobytes())

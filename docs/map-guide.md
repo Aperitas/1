@@ -640,11 +640,26 @@ POST /admin/waypoints/ { "name": "W1",  "map_id": 1, "pc_x": -5.2,  "pc_y": -3.1
 
 算不出来的字段返回 `null`（例如地图没填 bounds 时没有 `lon/lat`）。
 
-## 18. 在线查看本文档
+## 18. 这些说明在 /docs 里怎么看
 
-- 浏览器打开：`http://<host>:8001/help/map-guide`
-- `/docs` 顶部说明里有入口链接（【在线文档】→ 打开 Map Guide）
-- 本文档来自仓库 `docs/map-guide.md`，**改完刷新页面即生效**，无需重启服务
+本文档的章节**已经内嵌到 `/docs` 对应接口的 Description 里**（同一个 md 源，改这里重启即生效，不需要单独页面）：
+
+| 想看什么 | 打开 `/docs` 里的哪个接口 | 对应章节 |
+|---|---|---|
+| 地图字段含义 | `GET /admin/maps/{id}` | §2 返回字段 + §5 栅格格式 |
+| 上传点云/栅格 | `POST /admin/maps/upload` | §4 上传契约 |
+| 一步建图 | `POST /admin/maps/upload-pointcloud` | §19 一步建图 |
+| 点云滤波/生成栅格 | `POST /admin/maps/{id}/pointcloud/process` | §10 点云处理 |
+| **地图变换（三轴 + 仿射）** | `GET` / `PUT /admin/maps/{id}/transform` | **§15** |
+| 坐标换算 | `GET /admin/maps/{id}/coords` | §11 |
+| 导出 ROS 地图 | `GET /admin/maps/{id}/ros-map` | §21 |
+| 路线节点类型 | `POST /admin/paths/` | §16 + §17.7 |
+| 路线坐标（车端） | `GET /admin/paths/{id}/points` | §12 |
+| 站点/路径点传点云坐标 | `POST /admin/sites/`、`/admin/waypoints/` | §16.1 + §17.5/17.6 |
+| 车在点云图里的位置 | `POST /report/car_status` | §20 |
+
+> 三轴在 Swagger 里看：`PUT /admin/maps/{id}/transform` → Schema 里的 `rot_deg`（三轴-1 / yaw）、
+> `pitch_deg`（三轴-2）、`roll_deg`（三轴-3）；分别带示例值 3.5 / 10 / -4。
 
 ## 19. 一步建图（推荐）：上传点云直接生成地图
 
@@ -708,3 +723,123 @@ POST /admin/maps/upload-pointcloud      # multipart/form-data
 > `POST /admin/maps/{id}/pointcloud/process` 仍然保留，用于「对已有地图的点云再次滤波 / 重新生成栅格」，
 > 它也新增了 `keep_original` 参数，默认 false。
 
+
+## 20. 车辆在局部点云图中的位置
+
+前端要在点云/栅格图上画车，需要车在**点云坐标系**下的位姿（不是经纬度）。
+
+### 20.1 数据流
+
+```
+车端定位（ROS 里的 map 坐标系位姿）
+      ↓ POST /report/car_status   （pc_map_id / pc_x / pc_y / pc_yaw）
+      ↓ 入库 cars.pc_map_id / pc_x / pc_y / pc_yaw
+      ├─→ WebSocket `map` 频道广播（实时推给前端地图页）
+      └─→ GET /api/cars/list 返回
+```
+
+### 20.2 上报方式（三种，按可信度）
+
+| 车端传的 | 后端行为 |
+|---|---|
+| `pc_x` + `pc_y`（可带 `pc_yaw`、`pc_map_id`） | **直接采用**，最可信 |
+| 只传 `lon`/`lat`/`yaw` | 用地图的 `bounds` + `transform` **自动换算** `pc_x/pc_y/pc_yaw`（需要地图做过点云处理且填了 bounds） |
+| 都不传 / 换算失败 | **保持上一次的值**，不会把已有位姿清空 |
+
+`pc_map_id` 不传时：若车辆只绑定了一张地图，自动用那张；绑定多张时必须明确传。
+
+### 20.3 字段与坐标约定
+
+| 字段 | 含义 |
+|---|---|
+| `pc_map_id` | 位姿所属地图（点云坐标系） |
+| `pc_x` / `pc_y` | 点云坐标（米） |
+| `pc_yaw` | 点云坐标系航向角（**度**，`+x` 轴为 0，逆时针为正） |
+| `lon` / `lat` / `yaw` | 仍照常上报（`yaw` 是 0=正北、顺时针） |
+
+> 航向换算：后端会在地图上沿航向前进 1 米取第二点，两点都换算到点云后取 `atan2`，因此自动包含地图旋转。
+
+### 20.4 前端画车
+
+```js
+// 方式一：用 /coords 把点云坐标换成像素
+const { px, py } = (await api.get(`/admin/maps/${car.pc_map_id}/coords?x=${car.pc_x}&y=${car.pc_y}`)).data
+
+// 方式二：自己用 transform 的仿射矩阵算（省一次请求）
+// px = ( e*(x-c) - b*(y-f)) / det ，py = (-d*(x-c) + a*(y-f)) / det
+// 朝向：画箭头时用 pc_yaw（相对 +x 轴逆时针）
+```
+
+`GET /api/cars/list` 与 WS 广播里的车辆对象都会带：
+
+```json
+{ "car_id": 4, "lon": 113.96878, "lat": 22.60420, "yaw": 90,
+  "pc_map_id": 1, "pc_x": 0.05, "pc_y": -0.05, "pc_yaw": 0.0,
+  "speed": 0.5, "battery": 80 }
+```
+## 21. 导出 ROS 地图（map_server / AMCL 用）
+
+```http
+GET /admin/maps/{map_id}/ros-map
+```
+
+| 查询参数 | 默认 | 说明 |
+|---|---|---|
+| `occupied_thresh` | 0.65 | 写进 yaml 的占用概率阈值 |
+| `free_thresh` | 0.196 | 写进 yaml 的空闲概率阈值 |
+| `negate` | 0 | 0=黑=占用（默认）/ 1=反色 |
+| `z_low` / `z_high` | 0.15 / 1.8 | 障碍判定高度区间（米，相对地面） |
+
+做了什么：
+
+1. 用地图里**降采样后的点云**，按地图当前栅格帧（`grid_origin_x/y` + `grid_resolution` + `grid_width/height`）重新投影；
+2. 输出 ROS 语义的灰度值：**0=占用、254=空闲、205=未知**，写成 `P5` 二进制 PGM；
+3. `yaml.origin` 取图像**左下角**像素在点云坐标系中的位置，`yaw` 取变换的旋转角，`resolution` 取米/像素；
+4. 两个文件写到 `static/maps/map_{id}_ros.pgm` 与 `.yaml`，可直接下载到车端。
+
+返回示例：
+
+```json
+{ "code": 200, "msg": "ROS 地图导出成功",
+  "data": {
+    "map_id": 1,
+    "pgm_url": "/static/maps/map_1_ros.pgm",
+    "yaml_url": "/static/maps/map_1_ros.yaml",
+    "yaml": "image: map_1_ros.pgm\nresolution: 0.1\norigin: [-10.000000, -8.100000, 0.000000]\nnegate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.196\n",
+    "resolution": 0.1,
+    "width": 201, "height": 161,
+    "origin": [-10.0, -8.1, 0.0],
+    "origin_yaw_deg": 0.0,
+    "cells": { "occupied": 718, "free": 31641, "unknown": 2 },
+    "usage": "下载 pgm+yaml 到车端同一目录，然后 rosrun map_server map_server <目录>/map_1_ros.yaml"
+  } }
+```
+
+### 21.1 车端怎么用
+
+```bash
+# 1) 把两个文件放到同一目录（yaml 里的 image 是相对路径）
+scp map_1_ros.pgm map_1_ros.yaml xxz@<车端>:/home/xxz/maps/
+
+# 2) 起 map_server（ROS1 noetic）
+rosrun map_server map_server /home/xxz/maps/map_1_ros.yaml
+#    或写进 launch：
+#    <node pkg="map_server" type="map_server" name="map_server"
+#          args="/home/xxz/maps/map_1_ros.yaml" />
+
+# 3) AMCL + move_base 里把 global_costmap 的 static_map 指向这个 map
+#    AMCL 初始位姿用 /initialpose 设置（x/y 直接用点云坐标）
+rosrun amcl amcl scan:=/scan
+rostopic pub /initialpose geometry_msgs/PoseWithCovarianceStamped \
+  '{header: {frame_id: "map"}, pose: {pose: {position: {x: 0.0, y: 0.0}, orientation: {w: 1.0}}}}'
+```
+
+### 21.2 已知限制
+
+- **只支持「等比 + 旋转」的相似变换**：`map_server` 的 `origin` 只有 (x, y, yaw)，吃不下剪切/非等比。
+  地图变换里如果设了 `pitch_deg` / `roll_deg`（或自己传了带剪切的 `affine`），本接口会返回 400，
+  提示先把它们置 0（置 0 后等价的旋转仍可用 `rot_deg` 表达）。
+- `origin` 用的是**像素位置**（不是格中心），与点云坐标差半个像素（0.05 m 分辨率下 2.5 cm），可忽略。
+- 占用/空闲判定是**俯视高度带**启发式（默认地面以上 0.15~1.8 m 有点即占用），不是概率栅格；
+  玻璃、悬空物、坡道等会有误差，可按需调 `z_low/z_high` 重新导出。
+- 地图是 2D 的：车辆必须有 `scan`（或可降维的点云）与 `odom`，才能用 AMCL 定位。

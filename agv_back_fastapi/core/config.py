@@ -35,8 +35,10 @@ project_desc = """
     - timed：等一段时间自动走（时长由 dwell_time 秒控制）
     - wait_command：车端发命令才走（车端调用 POST /report/site_depart 或调度端下发 depart 指令）
 
-【在线文档】
-- 地图系统说明（传什么 / 存什么 / 坐标换算 / 栅格格式）：[打开 Map Guide](/help/map-guide)
+【接口文档说明】
+- 每个接口的 description 里内嵌了《地图系统说明》的对应章节（含义 / 传什么 / 存什么 / 示例）
+- 例如：`PUT /admin/maps/{id}/transform` 的描述就是「地图变换（三轴 + 仿射）」整章
+- 源码文档：docs/map-guide.md（与 /docs 描述同源）
 """
 
 

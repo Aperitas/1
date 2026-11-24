@@ -5,11 +5,12 @@ from core import settings
 from core.logger import logger
 from db import init_db
 from register import register_mount,register_exception,register_cors,register_middleware,register_router,register_timer
+from apis.api_docs import OPENAPI_TAGS
 from sqlmodel.sql.expression import Select,SelectOfScalar
 #import rospy
 SelectOfScalar.inherit_cache = True  # type: ignore
 Select.inherit_cache = True  # type: ignore
-app = FastAPI(description=settings.PROJECT_DESC,version=settings.PROJECT_VERSION)
+app = FastAPI(description=settings.PROJECT_DESC,version=settings.PROJECT_VERSION,openapi_tags=OPENAPI_TAGS)
 
 
 def create_app() :

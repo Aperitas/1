@@ -19,6 +19,11 @@ def car_payload(car: Cars, map_ids: List[int], map_names: Dict[int, str]) -> dic
         "speed" : car.speed,
         "lon" : car.lon,
         "lat" : car.lat,
+        # 局部点云坐标（车端在点云/栅格图中定位后上报；前端在点云图上画车用）
+        "pc_map_id" : car.pc_map_id,
+        "pc_x" : car.pc_x,
+        "pc_y" : car.pc_y,
+        "pc_yaw" : car.pc_yaw,
         "battery" : car.battery,
         "video_streams" : parse_streams(car.video_streams),
         "map_ids" : map_ids,

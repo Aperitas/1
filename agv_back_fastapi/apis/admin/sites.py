@@ -5,6 +5,7 @@ from models.site import Site, StopMode
 from apis.access import visible_map_ids
 from schemas.path import SiteCreate, SiteUpdate, SiteOut
 from schemas.resp import ApiResponse
+from apis.api_docs import SITE_FIELDS
 from utils.resp_code import resp_200, resp_400, resp_500
 from utils.patch import clean_update
 from models.map import Map
@@ -31,7 +32,7 @@ def _validate_site(data) -> Optional[str]:
     return None
 
 
-@router.post("/", summary="新增站点")
+@router.post("/", summary="新增站点", description=SITE_FIELDS)
 async def create_site(
         data: SiteCreate,
         session: Session = Depends(get_session),
@@ -96,7 +97,7 @@ async def get_site(
         return resp_400(msg="无权访问该地图的站点")
     return resp_200(data=site.dict())
 
-@router.put("/{site_id}", summary="修改站点信息")
+@router.put("/{site_id}", summary="修改站点信息", description=SITE_FIELDS)
 async def update_site(
         site_id: int = Path(..., description="站点ID"),
         data: SiteUpdate = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），description 传 null 表示清空"),

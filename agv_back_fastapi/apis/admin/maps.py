@@ -13,16 +13,21 @@ from apis.views import car_payload
 from core.logger import logger
 from schemas.map import MapCreate, MapUpdate, MapOut, MapTransformIn
 from schemas.resp import ApiResponse
+from apis.api_docs import MAP_READ, MAP_WRITE, MAP_UPLOAD, MAP_ONE_SHOT, MAP_PROCESS, MAP_COORDS, MAP_TRANSFORM, MAP_ROS
 from utils.resp_code import resp_200, resp_400, resp_500
 from utils.patch import clean_update
-from utils.pcd import PcdFormatError, build_grid, read_pcd_xyz, voxel_downsample, write_pcd_binary, write_png
+from utils.pcd import (
+    PcdFormatError, build_grid, build_grid_in_frame, read_pcd_xyz,
+    voxel_downsample, write_pcd_binary, write_pgm, write_png,
+)
 from utils.coords import (
     convert as convert_coords, corners_lonlat, corners_pc, get_transform,
-    has_bounds as map_has_bounds, has_grid as map_has_grid, transform_check,
+    get_affine, has_bounds as map_has_bounds, has_grid as map_has_grid, px_to_pc, transform_check,
 )
 from core.security import get_current_user, get_current_admin
 from models.user import Users
 from typing import List, Optional
+import math
 import mimetypes
 import uuid
 import os
@@ -154,7 +159,7 @@ MAP_UPLOAD_DIR = "static/maps"
 os.makedirs(MAP_UPLOAD_DIR, exist_ok=True)
 
 
-@router.post("/", summary="新增地图")
+@router.post("/", summary="新增地图", description=MAP_WRITE)
 async def create_map(
         data: MapCreate,
         session: Session = Depends(get_session),
@@ -182,7 +187,7 @@ async def create_map(
         return resp_500(msg=f"创建失败：{str(e)}")
 
 
-@router.post("/upload", summary="上传地图文件（点云/栅格）")
+@router.post("/upload", summary="上传地图文件（点云/栅格）", description=MAP_UPLOAD)
 async def upload_map_file(
         map_id: int = Form(..., description="要绑定文件的地图ID"),
         kind: str = Form("pointcloud", description="文件类型：pointcloud=点云文件 / grid=栅格文件"),
@@ -273,7 +278,7 @@ async def upload_map_file(
     )
 
 
-@router.post("/{map_id}/pointcloud/process", summary="点云滤波（体素降采样）并可生成栅格图")
+@router.post("/{map_id}/pointcloud/process", summary="点云滤波（体素降采样）并可生成栅格图", description=MAP_PROCESS)
 async def process_pointcloud(
         map_id: int = ApiPath(..., description="地图ID"),
         leaf_size: float = Query(0.05, description="体素降采样边长（米）；传 0 表示不降采样"),
@@ -404,7 +409,7 @@ async def process_pointcloud(
         return resp_500(msg="点云处理失败: %s" % str(e))
 
 
-@router.get("/{map_id}/coords", summary="坐标换算：栅格像素 / 点云 / 经纬度")
+@router.get("/{map_id}/coords", summary="坐标换算：栅格像素 / 点云 / 经纬度", description=MAP_COORDS)
 async def map_coords(
         map_id: int = ApiPath(..., description="地图ID"),
         px: Optional[float] = Query(None, description="栅格像素列（0=左/西，向右增大）"),
@@ -463,7 +468,7 @@ async def map_coords(
     })
 
 
-@router.get("/{map_id}/transform", summary="查看地图变换（缩放/平移/旋转）与尺度自检")
+@router.get("/{map_id}/transform", summary="查看地图变换（缩放/平移/旋转）与尺度自检", description=MAP_TRANSFORM)
 async def get_map_transform(
         map_id: int = ApiPath(..., description="地图ID"),
         session: Session = Depends(get_session),
@@ -490,7 +495,7 @@ async def get_map_transform(
     return resp_200(data=data)
 
 
-@router.put("/{map_id}/transform", summary="设置地图变换（缩放/平移/旋转）")
+@router.put("/{map_id}/transform", summary="设置地图变换（缩放/平移/旋转）", description=MAP_TRANSFORM)
 async def set_map_transform(
         map_id: int = ApiPath(..., description="地图ID"),
         data: MapTransformIn = Body(..., description="要修改的变换字段；reset=true 则清空回到自动值"),
@@ -556,7 +561,7 @@ async def set_map_transform(
     return resp_200(data=result, msg="地图变换已更新")
 
 
-@router.post("/upload-pointcloud", summary="一步建图：上传点云 → 滤波 → 生成栅格 → 创建地图")
+@router.post("/upload-pointcloud", summary="一步建图：上传点云 → 滤波 → 生成栅格 → 创建地图", description=MAP_ONE_SHOT)
 async def create_map_from_pointcloud(
         file: UploadFile = File(..., description="点云文件（.pcd，DATA=ascii / binary）"),
         name: str = Form(..., description="地图名称"),
@@ -732,6 +737,120 @@ async def create_map_from_pointcloud(
             logger.warning("清理临时点云失败 %s: %s" % (temp_path, exc))
 
 
+@router.get("/{map_id}/ros-map", summary="导出 ROS map_server 用的地图（.pgm + .yaml）", description=MAP_ROS)
+async def export_ros_map(
+        map_id: int = ApiPath(..., description="地图ID"),
+        occupied_thresh: float = Query(0.65, description="占用概率阈值（写进 yaml）"),
+        free_thresh: float = Query(0.196, description="空闲概率阈值（写进 yaml）"),
+        negate: int = Query(0, description="0=黑=占用（默认）/ 1=反色"),
+        z_low: float = Query(0.15, description="障碍判定下限：相对地面的高度（米）"),
+        z_high: float = Query(1.8, description="障碍判定上限：相对地面的高度（米）"),
+        session: Session = Depends(get_session),
+        user: Users = Depends(get_current_user)
+):
+    """把地图导出成 ROS `map_server` 能直接加载的 `.pgm + .yaml`（给 AMCL / move_base 用）。
+
+    - 栅格内容由**降采样后的点云**按地图当前栅格帧重新投影：0=占用、254=空闲、205=未知；
+    - `yaml.origin` 取图像**左下角**像素在点云坐标系中的位置，`yaw` 取变换的旋转角；
+      `resolution` 取变换的米/像素；
+    - 只支持「等比 + 旋转」的相似变换：若地图变换含 **pitch/roll（剪切/非等比）**，
+      返回 400 并提示先把 pitch/roll 置 0（map_server 的 origin 只支持 yaw）；
+    - 生成的文件放在 `static/maps/`，可直接下载到车端使用。
+    """
+    if negate not in (0, 1):
+        return resp_400(msg="negate 只能是 0 或 1")
+
+    map_obj = session.get(Map, map_id)
+    if not map_obj:
+        return resp_400(msg="地图不存在")
+    visible = visible_map_ids(session, user)
+    if visible is not None and map_id not in visible:
+        return resp_400(msg="无权访问该地图")
+
+    src = map_obj.pointcloud_file_path
+    if not src or not os.path.exists(src):
+        return resp_400(msg="该地图没有点云文件，无法导出栅格")
+    if not (map_obj.grid_width and map_obj.grid_height and map_obj.grid_resolution
+            and map_obj.grid_origin_x is not None and map_obj.grid_origin_y is not None):
+        return resp_400(msg="该地图还没有栅格帧信息，请先做点云处理")
+
+    aff = get_affine(map_obj)
+    if aff is None:
+        return resp_400(msg="该地图缺少「像素->点云」变换，无法计算 ROS 地图 origin")
+
+    # 相似变换校验：a==-e 且 b==d（含 y 翻转+旋转+等比缩放）
+    tol = 1e-6 * (abs(aff["a"]) + abs(aff["d"]) + 1e-9)
+    if abs(aff["b"] - aff["d"]) > tol or abs(aff["e"] + aff["a"]) > tol:
+        return resp_400(msg=(
+            "当前地图变换不是「等比 + 旋转」的相似变换（含 pitch/roll 或自定义 affine 的剪切），"
+            "ROS map_server 的 origin 只支持 yaw，请先把 pitch_deg / roll_deg 置 0"
+        ))
+
+    resolution = float(map_obj.grid_resolution)
+    width = int(map_obj.grid_width)
+    height = int(map_obj.grid_height)
+
+    try:
+        xyz = read_pcd_xyz(src)
+        img = build_grid_in_frame(
+            xyz,
+            origin_x=float(map_obj.grid_origin_x),
+            origin_y=float(map_obj.grid_origin_y),
+            width=width,
+            height=height,
+            resolution=resolution,
+            z_low=z_low,
+            z_high=z_high,
+        )
+    except Exception as e:
+        logger.error("导出 ROS 地图失败: %s" % e)
+        return resp_500(msg="导出失败: %s" % str(e))
+
+    # 左下角像素在点云里的位置 + 旋转角（rad）
+    lb_x, lb_y = px_to_pc(map_obj, 0, height)
+    yaw_rad = math.atan2(aff["d"], aff["a"])
+
+    pgm_name = "map_%d_ros.pgm" % map_id
+    yaml_name = "map_%d_ros.yaml" % map_id
+    pgm_path = os.path.join(MAP_UPLOAD_DIR, pgm_name)
+    yaml_path = os.path.join(MAP_UPLOAD_DIR, yaml_name)
+    write_pgm(pgm_path, img)
+
+    yaml_text = (
+        "image: %s\n" % pgm_name
+        + "resolution: %s\n" % resolution
+        + "origin: [%.6f, %.6f, %.6f]\n" % (lb_x, lb_y, yaw_rad)
+        + "negate: %d\n" % negate
+        + "occupied_thresh: %s\n" % occupied_thresh
+        + "free_thresh: %s\n" % free_thresh
+    )
+    with open(yaml_path, "w", encoding="utf-8") as f:
+        f.write(yaml_text)
+
+    occ_cnt = int((img == 0).sum())
+    free_cnt = int((img == 254).sum())
+    unknown_cnt = int((img == 205).sum())
+    logger.info("导出 ROS 地图: map_id=%s %dx%d res=%.3f 占用=%d" % (map_id, width, height, resolution, occ_cnt))
+
+    return resp_200(msg="ROS 地图导出成功", data={
+        "map_id": map_id,
+        "pgm_url": _file_url(pgm_path),
+        "yaml_url": _file_url(yaml_path),
+        "yaml": yaml_text,
+        "resolution": resolution,
+        "width": width,
+        "height": height,
+        "origin": [round(lb_x, 6), round(lb_y, 6), round(yaw_rad, 6)],
+        "origin_yaw_deg": round(math.degrees(yaw_rad), 4),
+        "cells": {"occupied": occ_cnt, "free": free_cnt, "unknown": unknown_cnt},
+        "usage": (
+            "下载 pgm+yaml 到车端同一目录，然后：\n"
+            "  rosrun map_server map_server <目录>/%s\n"
+            "  AMCL 初始位姿可用 /initialpose 设置（x/y 用点云坐标）" % yaml_name
+        ),
+    })
+
+
 @router.delete("/{map_id}/files/{kind}", summary="删除地图的点云/栅格文件")
 async def delete_map_file(
         map_id: int = ApiPath(..., description="地图ID"),
@@ -769,7 +888,7 @@ async def delete_map_file(
     return resp_200(msg="文件已删除", data={"map_id": map_id, "kind": kind})
 
 
-@router.get("/", summary="获取所有地图列表", response_model=ApiResponse[List[MapOut]])
+@router.get("/", summary="获取所有地图列表", response_model=ApiResponse[List[MapOut]], description=MAP_READ)
 async def list_maps(
         map_type: Optional[str] = Query(None, description="按类型筛选：tianditu=天地图 / local=本地地图"),
         session: Session = Depends(get_session),
@@ -806,7 +925,7 @@ async def list_maps(
     return resp_200(data=result)
 
 
-@router.get("/{map_id}", summary="获取单个地图详情", response_model=ApiResponse[MapOut])
+@router.get("/{map_id}", summary="获取单个地图详情", response_model=ApiResponse[MapOut], description=MAP_READ)
 async def get_map(
         map_id: int = ApiPath(..., description="地图ID"),
         session: Session = Depends(get_session),
@@ -911,7 +1030,7 @@ async def list_map_users(
     })
 
 
-@router.put("/{map_id}", summary="修改地图信息")
+@router.put("/{map_id}", summary="修改地图信息", description=MAP_WRITE)
 async def update_map(
         map_id: int = ApiPath(..., description="地图ID"),
         data: MapUpdate = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），description/fallback_map_id 传 null 表示清空"),

@@ -63,22 +63,33 @@ class MapUpdate(SQLModel):
 
 class MapTransformIn(SQLModel):
     """设置地图变换（像素 -> 点云）：可缩放/平移/旋转；与其他 update 接口一致，只传要改的字段"""
-    scale: Optional[float] = Field(default=None, description="米/像素（必须 > 0）")
-    rot_deg: Optional[float] = Field(default=None, description="旋转角 yaw（度，绕 Z 轴，逆时针为正）")
-    pitch_deg: Optional[float] = Field(default=None, description="绕 X 轴倾角（度）：正交俯视下表现为纵向压缩+剪切")
-    roll_deg: Optional[float] = Field(default=None, description="绕 Y 轴倾角（度）")
+    scale: Optional[float] = Field(default=None, description="【缩放】米/像素，必须 > 0；三轴里只有它改变大小")
+    rot_deg: Optional[float] = Field(default=None, description="【三轴-1】yaw：绕 Z 轴（垂直屏幕）旋转，度，逆时针为正")
+    pitch_deg: Optional[float] = Field(default=None, description="【三轴-2】pitch：绕 X 轴（左右方向）倾角，度；俯视下表现为纵向压缩+剪切，用来把歪掉的图转正")
+    roll_deg: Optional[float] = Field(default=None, description="【三轴-3】roll：绕 Y 轴（前后方向）倾角，度；俯视下表现为横向压缩+剪切")
     affine: Optional[List[float]] = Field(
         default=None,
-        description="仿射矩阵 [a,b,c,d,e,f]：x=a*px+b*py+c，y=d*px+e*py+f；优先级高于 yaw/pitch/roll",
+        description="【高级】直接给 2×3 仿射矩阵 [a,b,c,d,e,f]：x=a*px+b*py+c，y=d*px+e*py+f；传了它，yaw/pitch/roll 全部忽略（前端三点对齐时用）",
     )
     tx: Optional[float] = Field(default=None, description="图像原点(px=0,py=0) 对应的点云 X（米）")
     ty: Optional[float] = Field(default=None, description="图像原点(px=0,py=0) 对应的点云 Y（米）")
-    reset: Optional[bool] = Field(default=None, description="true=清空 tf_*，回退到点云处理生成的 grid_origin_*/grid_resolution")
+    reset: Optional[bool] = Field(default=None, description="true=清空以上所有变换（含三轴与 affine），回退到点云处理生成的值")
 
     @validator("scale", "rot_deg", "pitch_deg", "roll_deg", "tx", "ty", pre=True)
     def _blank_to_none(cls, value):
         return blank_to_none(value)
 
+    class Config:
+        schema_extra = {
+            "example": {
+                "scale": 0.05,
+                "rot_deg": 3.5,          # 三轴-1 yaw（绕 Z 轴）
+                "pitch_deg": 10.0,       # 三轴-2 pitch（绕 X 轴，用于把歪图转正）
+                "roll_deg": -4.0,        # 三轴-3 roll（绕 Y 轴）
+                "tx": -17.995,
+                "ty": 15.997,
+            }
+        }
 
 class MapOut(SQLModel):
     """地图信息（返回结构）"""

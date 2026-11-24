@@ -12,6 +12,7 @@ from models.car.map_link import CarMapLink
 from apis.access import visible_map_ids
 from schemas.path import PathCreate, PathUpdate, PathOut
 from schemas.resp import ApiResponse
+from apis.api_docs import PATH_CREATE_DESC, PATH_UPDATE_DESC, PATH_MAP_INFO, CAR_POINTS
 from utils.resp_code import resp_200, resp_400, resp_500
 from utils.patch import clean_update
 from core.security import get_current_user
@@ -219,7 +220,7 @@ def _validate_temp_path(session: Session, car_id: Optional[int], map_id: int,
         return "该车辆在此地图已存在临时路径"
     return None
 
-@router.post("/", summary="保存路线（含节点序列和类型）")
+@router.post("/", summary="保存路线（含节点序列和类型）", description=PATH_CREATE_DESC)
 async def create_path(
         data: PathCreate,
         session: Session = Depends(get_session),
@@ -281,7 +282,7 @@ async def create_path(
         session.rollback()
         return resp_500(msg=f"保存失败：{str(e)}")
 
-@router.get("/", summary="获取所有路线（可筛选类型、小车或地图）", response_model=ApiResponse[List[PathOut]])
+@router.get("/", summary="获取所有路线（可筛选类型、小车或地图）", response_model=ApiResponse[List[PathOut]], description=PATH_MAP_INFO)
 async def list_paths(
         path_type: Optional[str] = Query(None, description="路线类型: 吸附道路/贝塞尔曲线/折线"),
         car_id: Optional[int] = Query(None, description="关联小车ID"),
@@ -314,7 +315,7 @@ async def list_paths(
         result.append(_path_payload(session, p))
     return resp_200(data=result)
 
-@router.get("/{path_id}", summary="获取单条路线详情（含完整节点坐标）", response_model=ApiResponse[PathOut])
+@router.get("/{path_id}", summary="获取单条路线详情（含完整节点坐标）", response_model=ApiResponse[PathOut], description=PATH_MAP_INFO)
 async def get_path(
         path_id: int = ApiPath(..., description="路线ID"),
         session: Session = Depends(get_session),
@@ -329,7 +330,7 @@ async def get_path(
         return resp_400(msg="无权访问该地图的路线")
     return resp_200(data=_path_payload(session, path))
 
-@router.get("/{path_id}/points", summary="把路线节点解析成坐标（经纬度 / 栅格像素 / 点云米）")
+@router.get("/{path_id}/points", summary="把路线节点解析成坐标（经纬度 / 栅格像素 / 点云米）", description=CAR_POINTS)
 async def get_path_points(
         path_id: int = ApiPath(..., description="路线ID"),
         frame: str = Query("lonlat", description="坐标系：lonlat=经纬度 / grid=栅格像素(px,py) / pc=点云米(x,y，车端导航用)"),
@@ -356,7 +357,7 @@ async def get_path_points(
     return resp_200(data=data)
 
 
-@router.put("/{path_id}", summary="修改路线（名称、类型、节点序列等）")
+@router.put("/{path_id}", summary="修改路线（名称、类型、节点序列等）", description=PATH_UPDATE_DESC)
 async def update_path(
         path_id: int = ApiPath(..., description="路线ID"),
         data: PathUpdate = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），car_id 传 null 表示解除专属"),

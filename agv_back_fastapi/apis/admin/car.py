@@ -18,6 +18,7 @@ from apis.access import visible_map_ids
 from apis.views import car_payload
 from utils.video_streams import dump_streams, parse_streams
 from utils.patch import blank_to_none, clean_update
+from apis.api_docs import CAR_POINTS
 from utils.resp_code import resp_200, resp_500, resp_400
 from apis.websocket.process import manager
 from pydantic import BaseModel, Field, validator
@@ -254,7 +255,7 @@ async def update_car(
         logger.error(f"修改小车信息失败: {e}")
         return resp_500(msg=f"修改失败: {str(e)}")
 
-@car_api.get("/{car_id}/paths/{path_id}/points", summary="车端取路线坐标（默认点云米制）")
+@car_api.get("/{car_id}/paths/{path_id}/points", summary="车端取路线坐标（默认点云米制）", description=CAR_POINTS)
 async def get_car_path_points(
         car_id: int = ApiPath(..., description="车辆ID"),
         path_id: int = ApiPath(..., description="路线ID"),

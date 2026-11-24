@@ -5,6 +5,7 @@ from models.waypoint import Waypoint
 from apis.access import visible_map_ids
 from schemas.path import WaypointCreate, WaypointUpdate, WaypointOut
 from schemas.resp import ApiResponse
+from apis.api_docs import SITE_FIELDS
 from utils.resp_code import resp_200, resp_400, resp_500
 from utils.patch import clean_update
 from models.map import Map
@@ -16,7 +17,7 @@ from fastapi import Query
 
 router = APIRouter(prefix="/admin/waypoints", tags=["路径点管理"])
 
-@router.post("/", summary="新增路径点")
+@router.post("/", summary="新增路径点", description=SITE_FIELDS)
 async def create_waypoint(
         data: WaypointCreate,
         session: Session = Depends(get_session),
@@ -75,7 +76,7 @@ async def get_waypoint(
         return resp_400(msg="无权访问该地图的路径点")
     return resp_200(data=wp.dict())
 
-@router.put("/{wp_id}", summary="修改路径点信息")
+@router.put("/{wp_id}", summary="修改路径点信息", description=SITE_FIELDS)
 async def update_waypoint(
         wp_id: int = Path(..., description="路径点ID"),
         data: WaypointUpdate = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），description 传 null 表示清空"),
