@@ -13,7 +13,10 @@ from apis.views import car_payload
 from core.logger import logger
 from schemas.map import MapCreate, MapUpdate, MapOut, MapTransformIn
 from schemas.resp import ApiResponse
-from apis.api_docs import MAP_READ, MAP_WRITE, MAP_UPLOAD, MAP_ONE_SHOT, MAP_PROCESS, MAP_COORDS, MAP_TRANSFORM, MAP_ROS
+from apis.api_docs import (
+    MAP_COORDS, MAP_ONE_SHOT, MAP_PROCESS, MAP_READ, MAP_ROS, MAP_TRANSFORM,
+    MAP_UPLOAD, MAP_WRITE, GRID_REGENERATE_DESC,
+)
 from utils.resp_code import resp_200, resp_400, resp_500
 from utils.patch import clean_update
 from utils.pcd import (
@@ -22,7 +25,8 @@ from utils.pcd import (
 )
 from utils.coords import (
     convert as convert_coords, corners_lonlat, corners_pc, get_transform,
-    get_affine, has_bounds as map_has_bounds, has_grid as map_has_grid, px_to_pc, transform_check,
+    get_affine, get_ros_frame, has_bounds as map_has_bounds, has_grid as map_has_grid,
+    px_to_pc, transform_check,
 )
 from core.security import get_current_user, get_current_admin
 from models.user import Users
@@ -286,6 +290,8 @@ async def process_pointcloud(
         grid_mode: str = Query("occupancy", description="栅格模式：occupancy=占用（黑白） / height=高度灰度"),
         z_low: float = Query(0.15, description="障碍判定下限：相对地面的高度（米）"),
         z_high: float = Query(1.8, description="障碍判定上限：相对地面的高度（米）"),
+        flip_x: bool = Query(False, description="栅格是否左右镜像"),
+        flip_y: bool = Query(False, description="栅格是否上下镜像"),
         replace: bool = Query(False, description="是否用降采样结果覆盖原点云文件"),
         keep_original: bool = Query(False, description="是否保留原始大点云；默认 false=只留降采样结果（省磁盘）"),
         generate_grid: bool = Query(True, description="是否同时生成/覆盖栅格图"),
@@ -339,7 +345,8 @@ async def process_pointcloud(
 
         grid_data = None
         if generate_grid:
-            pixels, meta = build_grid(pts, resolution=grid_resolution, mode=grid_mode, z_low=z_low, z_high=z_high)
+            pixels, meta = build_grid(pts, resolution=grid_resolution, mode=grid_mode, z_low=z_low,
+                                      z_high=z_high, flip_x=flip_x, flip_y=flip_y)
             grid_name = "map_%d_grid_auto_%sm.png" % (map_id, str(grid_resolution).replace(".", "_"))
             grid_path = os.path.join(MAP_UPLOAD_DIR, grid_name)
             write_png(grid_path, pixels)
@@ -358,6 +365,8 @@ async def process_pointcloud(
             map_obj.grid_resolution = meta["resolution"]
             map_obj.grid_width = meta["width"]
             map_obj.grid_height = meta["height"]
+            map_obj.grid_flip_x = bool(flip_x)
+            map_obj.grid_flip_y = bool(flip_y)
             grid_data = {
                 "grid_file_url": _file_url(grid_path),
                 "grid_width": meta["width"],
@@ -580,6 +589,8 @@ async def create_map_from_pointcloud(
         grid_mode: str = Form("occupancy", description="栅格模式：occupancy=占用(黑白) / height=高度灰度"),
         z_low: float = Form(0.15, description="障碍判定下限：相对地面的高度（米）"),
         z_high: float = Form(1.8, description="障碍判定上限：相对地面的高度（米）"),
+        flip_x: bool = Form(False, description="栅格是否左右镜像（前端看到图左右反了就打开）"),
+        flip_y: bool = Form(False, description="栅格是否上下镜像（前端看到图上下反了就打开）"),
         keep_original: bool = Form(False, description="是否保留原始大点云；默认 false=只留降采样结果"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
@@ -664,7 +675,8 @@ async def create_map_from_pointcloud(
             written.append(raw_path)
 
         # ---------- 5) 俯视投影生成栅格 PNG ----------
-        pixels, meta = build_grid(pts, resolution=grid_resolution, mode=grid_mode, z_low=z_low, z_high=z_high)
+        pixels, meta = build_grid(pts, resolution=grid_resolution, mode=grid_mode, z_low=z_low,
+                                  z_high=z_high, flip_x=flip_x, flip_y=flip_y)
         grid_path = os.path.join(
             MAP_UPLOAD_DIR, "map_%d_grid_auto_%sm.png" % (map_obj.id, str(grid_resolution).replace(".", "_")))
         write_png(grid_path, pixels)
@@ -692,6 +704,8 @@ async def create_map_from_pointcloud(
         map_obj.grid_resolution = meta["resolution"]
         map_obj.grid_width = meta["width"]
         map_obj.grid_height = meta["height"]
+        map_obj.grid_flip_x = bool(flip_x)
+        map_obj.grid_flip_y = bool(flip_y)
         session.add(map_obj)
         session.commit()
         session.refresh(map_obj)
@@ -774,17 +788,12 @@ async def export_ros_map(
             and map_obj.grid_origin_x is not None and map_obj.grid_origin_y is not None):
         return resp_400(msg="该地图还没有栅格帧信息，请先做点云处理")
 
-    aff = get_affine(map_obj)
-    if aff is None:
-        return resp_400(msg="该地图缺少「像素->点云」变换，无法计算 ROS 地图 origin")
-
-    # 相似变换校验：a==-e 且 b==d（含 y 翻转+旋转+等比缩放）
-    tol = 1e-6 * (abs(aff["a"]) + abs(aff["d"]) + 1e-9)
-    if abs(aff["b"] - aff["d"]) > tol or abs(aff["e"] + aff["a"]) > tol:
-        return resp_400(msg=(
-            "当前地图变换不是「等比 + 旋转」的相似变换（含 pitch/roll 或自定义 affine 的剪切），"
-            "ROS map_server 的 origin 只支持 yaw，请先把 pitch_deg / roll_deg 置 0"
-        ))
+    # ROS 用「规范帧」：忽略镜像（yaml.origin 表达不了镜像），只允许等比 + 旋转
+    frame, frame_error = get_ros_frame(map_obj)
+    if frame_error:
+        return resp_400(msg=frame_error)
+    if map_obj.pc_max_y is None:
+        return resp_400(msg="缺少点云包围盒（pc_max_y），请先做点云处理")
 
     resolution = float(map_obj.grid_resolution)
     width = int(map_obj.grid_width)
@@ -792,10 +801,11 @@ async def export_ros_map(
 
     try:
         xyz = read_pcd_xyz(src)
+        # 规范方向：第 0 行 = pc_max_y（北），第 0 列 = pc_min_x（西），与镜像设置无关
         img = build_grid_in_frame(
             xyz,
-            origin_x=float(map_obj.grid_origin_x),
-            origin_y=float(map_obj.grid_origin_y),
+            origin_x=float(map_obj.pc_min_x),
+            origin_y=float(map_obj.pc_max_y),
             width=width,
             height=height,
             resolution=resolution,
@@ -806,9 +816,9 @@ async def export_ros_map(
         logger.error("导出 ROS 地图失败: %s" % e)
         return resp_500(msg="导出失败: %s" % str(e))
 
-    # 左下角像素在点云里的位置 + 旋转角（rad）
-    lb_x, lb_y = px_to_pc(map_obj, 0, height)
-    yaw_rad = math.atan2(aff["d"], aff["a"])
+    # 左下角像素在点云里的位置 + 旋转角（rad）——来自规范帧（已撤掉镜像）
+    lb_x, lb_y = frame["origin_x"], frame["origin_y"]
+    yaw_rad = frame["yaw"]
 
     pgm_name = "map_%d_ros.pgm" % map_id
     yaml_name = "map_%d_ros.yaml" % map_id
@@ -842,6 +852,7 @@ async def export_ros_map(
         "height": height,
         "origin": [round(lb_x, 6), round(lb_y, 6), round(yaw_rad, 6)],
         "origin_yaw_deg": round(math.degrees(yaw_rad), 4),
+        "ros_export_ignores_flip": bool(map_obj.grid_flip_x or map_obj.grid_flip_y),
         "cells": {"occupied": occ_cnt, "free": free_cnt, "unknown": unknown_cnt},
         "usage": (
             "下载 pgm+yaml 到车端同一目录，然后：\n"
@@ -849,6 +860,115 @@ async def export_ros_map(
             "  AMCL 初始位姿可用 /initialpose 设置（x/y 用点云坐标）" % yaml_name
         ),
     })
+
+
+@router.post("/{map_id}/grid/regenerate", summary="重新生成栅格图（可翻转 / 换模式，不动点云）", description=GRID_REGENERATE_DESC)
+async def regenerate_grid(
+        map_id: int = ApiPath(..., description="地图ID"),
+        flip_x: Optional[bool] = Query(None, description="左右镜像；不传=保持地图当前设置"),
+        flip_y: Optional[bool] = Query(None, description="上下镜像；不传=保持地图当前设置"),
+        grid_mode: str = Query("occupancy", description="栅格模式：occupancy=占用(黑白) / height=高度灰度"),
+        z_low: float = Query(0.15, description="障碍判定下限：相对地面的高度（米）"),
+        z_high: float = Query(1.8, description="障碍判定上限：相对地面的高度（米）"),
+        session: Session = Depends(get_session),
+        user: Users = Depends(get_current_user)
+):
+    """用已有的降采样点云**只重画栅格 PNG**，不修改点云文件。
+
+    用途：前端发现图上下/左右反了，或想换 occupancy/height 模式、调整障碍高度，
+    不必重新上传/降采样点云，1~2 秒即可更新。
+
+    - `flip_x` / `flip_y` 不传时沿用地图当前设置（响应里能看到最终值）；
+    - 翻转会同时把 `grid_origin_x/origin_y` 换成「新图左上角」的点云坐标，并写入 `grid_flip_*`，
+      因此 `/admin/maps/{id}/coords` 与路线坐标换算**自动保持一致**；
+    - 如果地图设置过自定义 `tf_*` 变换，翻转会让 origin 变化，建议先 `PUT /transform {"reset":true}` 再翻。
+    """
+    if not user.isAdmin:
+        return resp_400(msg="仅管理员可操作")
+    if grid_mode not in ("occupancy", "height"):
+        return resp_400(msg="grid_mode 只能是 occupancy 或 height")
+
+    map_obj = session.get(Map, map_id)
+    if not map_obj:
+        return resp_400(msg="地图不存在")
+    src = map_obj.pointcloud_file_path
+    if not src or not os.path.exists(src):
+        return resp_400(msg="该地图没有点云文件，请先上传/处理点云")
+    if not (map_obj.grid_resolution and map_obj.grid_width and map_obj.grid_height
+            and map_obj.grid_origin_x is not None and map_obj.grid_origin_y is not None):
+        return resp_400(msg="该地图还没有栅格帧信息，请先做点云处理")
+
+    fx = bool(map_obj.grid_flip_x) if flip_x is None else bool(flip_x)
+    fy = bool(map_obj.grid_flip_y) if flip_y is None else bool(flip_y)
+
+    warnings = []
+    if any(v is not None for v in (map_obj.tf_scale, map_obj.tf_rot_deg, map_obj.tf_tx, map_obj.tf_ty,
+                                   getattr(map_obj, "tf_pitch_deg", None), getattr(map_obj, "tf_roll_deg", None),
+                                   getattr(map_obj, "tf_affine", None))):
+        warnings.append("地图设置过自定义变换(tf_*)，翻转会改变 origin，建议先 PUT /admin/maps/{id}/transform 传 {'reset': true}")
+
+    try:
+        xyz = read_pcd_xyz(src)
+        pixels, meta = build_grid(
+            xyz,
+            resolution=float(map_obj.grid_resolution),
+            mode=grid_mode,
+            z_low=z_low,
+            z_high=z_high,
+            flip_x=fx,
+            flip_y=fy,
+        )
+        grid_name = "map_%d_grid_auto_%sm.png" % (map_id, str(map_obj.grid_resolution).replace(".", "_"))
+        grid_path = os.path.join(MAP_UPLOAD_DIR, grid_name)
+        write_png(grid_path, pixels)
+
+        old_grid = map_obj.grid_file_path
+        if old_grid and os.path.exists(old_grid) and os.path.abspath(old_grid) != os.path.abspath(grid_path):
+            try:
+                os.remove(old_grid)
+            except Exception as exc:
+                logger.warning("清理旧栅格失败: %s" % exc)
+
+        now = datetime.now()
+        map_obj.grid_file_path = grid_path
+        map_obj.grid_file_type = "png"
+        map_obj.grid_file_size = os.path.getsize(grid_path)
+        map_obj.grid_file_upload_time = now
+        map_obj.grid_origin_x = meta["origin_x"]
+        map_obj.grid_origin_y = meta["origin_y"]
+        map_obj.grid_resolution = meta["resolution"]
+        map_obj.grid_width = meta["width"]
+        map_obj.grid_height = meta["height"]
+        map_obj.grid_flip_x = fx
+        map_obj.grid_flip_y = fy
+        session.add(map_obj)
+        session.commit()
+        session.refresh(map_obj)
+
+        return resp_200(msg="栅格已重新生成", data={
+            "map_id": map_id,
+            "grid_file_url": _file_url(map_obj.grid_file_path),
+            "grid_width": map_obj.grid_width,
+            "grid_height": map_obj.grid_height,
+            "grid_resolution": map_obj.grid_resolution,
+            "grid_origin_x": map_obj.grid_origin_x,
+            "grid_origin_y": map_obj.grid_origin_y,
+            "flip_x": fx,
+            "flip_y": fy,
+            "grid_mode": grid_mode,
+            "corners_pc": corners_pc(map_obj),
+            "warnings": warnings,
+        })
+    except PcdFormatError as e:
+        session.rollback()
+        return resp_400(msg=str(e))
+    except ValueError as e:
+        session.rollback()
+        return resp_400(msg=str(e))
+    except Exception as e:
+        session.rollback()
+        logger.error("重新生成栅格失败: %s" % e)
+        return resp_500(msg="重新生成栅格失败: %s" % str(e))
 
 
 @router.delete("/{map_id}/files/{kind}", summary="删除地图的点云/栅格文件")

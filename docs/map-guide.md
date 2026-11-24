@@ -172,6 +172,32 @@ const toPx = (lon, lat, img) => [
 
 > 后端目前不做栅格规划，颜色约定只为将来接入占用栅格留口子。
 
+### 5.4 翻转（flip_x / flip_y）与坐标一致性
+
+前端反馈「图和点云上下/左右反了」时，可以给栅格加镜像：
+
+| 参数 | 含义 | 翻转后 |
+|---|---|---|
+| `flip_x` | 左右镜像 | 图像第 0 列 = `max_x`（东） |
+| `flip_y` | 上下镜像 | 图像第 0 行 = `min_y`（南） |
+
+镜像不是「只翻图片」：后端会同时把 `grid_origin_x / grid_origin_y` 换成**新图左上角**的点云坐标，
+并把 `px` / `py` 的符号并入仿射矩阵，因此 `/coords`、`/paths/{id}/points` 的换算**自动保持一致**，前端不用改代码。
+
+| 组合 | 图像第 0 行 / 第 0 列 | `grid_origin_x` | `grid_origin_y` |
+|---|---|---|---|
+| 不翻 | 北 / 西 | `min_x` | `max_y` |
+| `flip_y` | 南 / 西 | `min_x` | `min_y` |
+| `flip_x` | 北 / 东 | `max_x` | `max_y` |
+| 两者 | 南 / 东 | `max_x` | `min_y` |
+
+在哪翻：`POST /admin/maps/upload-pointcloud`、`POST /admin/maps/{id}/pointcloud/process` 的 `flip_x/flip_y`；
+或者**只重画栅格**（不动点云，1~2 秒）：`POST /admin/maps/{id}/grid/regenerate?flip_y=true`。
+
+> 若同时设置了自定义 `tf_affine`，以矩阵为准（矩阵里已含翻转）；`grid_flip_*` 只影响「三轴 / 回退」模式。
+> ROS 导出（§21）会**忽略**翻转，始终按规范方向生成 PGM。
+
+
 ## 6. 点云
 
 - 支持 `.pcd .ply .las .laz .xyz .zip`；后端只存储，不解析；
@@ -568,6 +594,7 @@ POST /admin/waypoints/ { "name": "W1",  "map_id": 1, "pc_x": -5.2,  "pc_y": -3.1
 | `grid_mode` | occupancy | occupancy / height | 生成 `grid_file_*` |
 | `z_low` / `z_high` | 0.15 / 1.8 | 障碍判定高度区间 | 影响栅格内容 |
 | `replace` | false | 覆盖原点云？ | true=写回原路径 |
+| `flip_x` / `flip_y` | false | 栅格左右 / 上下镜像 | `grid_flip_x/y`、`grid_origin_x/y` |
 | `generate_grid` | true | 是否生成栅格 | `grid_file_path` 等 |
 | `keep_original` | false | **默认删除原始大点云**（只留降采样结果）；true=保留 | 磁盘 |
 | — | — | 自动统计点云包围盒 | `pc_min_x/max_x/min_y/max_y/min_z/max_z`、`grid_origin_x/grid_origin_y` |
@@ -652,6 +679,7 @@ POST /admin/waypoints/ { "name": "W1",  "map_id": 1, "pc_x": -5.2,  "pc_y": -3.1
 | 点云滤波/生成栅格 | `POST /admin/maps/{id}/pointcloud/process` | §10 点云处理 |
 | **地图变换（三轴 + 仿射）** | `GET` / `PUT /admin/maps/{id}/transform` | **§15** |
 | 坐标换算 | `GET /admin/maps/{id}/coords` | §11 |
+| 翻转 / 重画栅格 | `POST /admin/maps/{id}/grid/regenerate` | §5.4 + §22 |
 | 导出 ROS 地图 | `GET /admin/maps/{id}/ros-map` | §21 |
 | 路线节点类型 | `POST /admin/paths/` | §16 + §17.7 |
 | 路线坐标（车端） | `GET /admin/paths/{id}/points` | §12 |
@@ -682,6 +710,7 @@ POST /admin/maps/upload-pointcloud      # multipart/form-data
 | `grid_resolution` | 0.05 | 栅格分辨率（米/像素） |
 | `grid_mode` | `occupancy` | `occupancy` / `height` |
 | `z_low` / `z_high` | 0.15 / 1.8 | 障碍判定高度区间（米） |
+| `flip_x` / `flip_y` | false / false | 栅格左右 / 上下镜像（见 §5.4）；翻转后 origin 自动换到新左上角 |
 | `keep_original` | **false** | 是否保留原始大点云；默认只留降采样结果 |
 
 内部流程（一次请求内完成，任一步失败自动回滚并删除半成品）：
@@ -843,3 +872,45 @@ rostopic pub /initialpose geometry_msgs/PoseWithCovarianceStamped \
 - 占用/空闲判定是**俯视高度带**启发式（默认地面以上 0.15~1.8 m 有点即占用），不是概率栅格；
   玻璃、悬空物、坡道等会有误差，可按需调 `z_low/z_high` 重新导出。
 - 地图是 2D 的：车辆必须有 `scan`（或可降维的点云）与 `odom`，才能用 AMCL 定位。
+- 导出**忽略 `flip_x / flip_y`**：PGM 始终按「图像上方 = +y」的规范方向生成，
+  `yaml.origin` 取左下角（`pc_min_x, pc_min_y`）；响应里 `ros_export_ignores_flip=true` 表示该地图开过镜像。
+
+
+## 22. 栅格图「方向不对」自测方法（给前端）
+
+后端已用合成点云验证：**生成的栅格是「图像上方 = 点云 +y」**，并且 `coords` 与图片自洽。
+若看起来反了，按下面顺序定位，别急着改图。
+
+### 步骤 1：先分清是「镜像」还是「旋转」
+
+- 只是上下颠倒、左右正常 → **镜像**（`flip_y`）或渲染 y 轴方向问题；
+- 上下左右**都**颠倒（等于转了 180°）→ 是**旋转**，用 `PUT /transform {"rot_deg": 180}`，**不要用 flip**（flip 会把场地左右弄反）。
+
+### 步骤 2：三个对照实验
+
+| 实验 | 做法 | 说明 |
+|---|---|---|
+| ① 直接看 PNG | 浏览器打开 `grid_file_url` | 这就是后端视角；后端不会再翻一次 |
+| ② 与点云对照 | 找场地里**只在一边**的物体（门、柱子、充电桩），看它在 PNG 的上面还是下面 | 与点云里该物体在 +y / -y 是否一致 |
+| ③ 与天地图对照 | 用 `bounds` 叠图后，看同一物体在实景的哪一侧 | 分别验证「南北」与「东西」 |
+
+### 步骤 3：按结论处理
+
+| 现象 | 处理 |
+|---|---|
+| ②错（点云里在 +y，图里却在下方） | 前端渲染坐标系问题（three.js 默认 y-up、canvas y 向下）→ `flip_y=true`，或修渲染 |
+| ②对、③错且整体转了 180° | 点云 +y 指向南 → `PUT /transform {"rot_deg": 180}` |
+| ②对、③错且左右颠倒 | 检查 `bounds`：`left_top` 必须是「西 + 北」，`right_bottom` 是「东 + 南」 |
+| ②③都对但和记忆中的场地不符 | 建图时朝向问题，重新建图或整体旋转 |
+
+### 步骤 4：翻转后自检
+
+```http
+POST /admin/maps/{id}/grid/regenerate?flip_y=true     # 只重画栅格，不动点云
+GET  /admin/maps/{id}/transform                       # flip_y 应为 true，corners_pc 随之变化
+GET  /admin/maps/{id}/coords?px=0&py=0                # flip_y 后应变成 (min_x, min_y)
+```
+
+- `scale_ratio` 偏离 1 超过 5% 时 `warnings` 会提示：说明 `bounds` 与实际尺寸对不上（图被拖过或没填对）；
+- 翻转不会影响车端：车端用的是 `points?frame=pc`（点云米制），与图像方向无关。
+

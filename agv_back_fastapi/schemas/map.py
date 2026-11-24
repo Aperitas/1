@@ -135,6 +135,8 @@ class MapOut(SQLModel):
     grid_resolution: Optional[float] = Field(default=None, description="栅格分辨率（米/像素）")
     grid_width: Optional[int] = Field(default=None, description="栅格宽度（像素）")
     grid_height: Optional[int] = Field(default=None, description="栅格高度（像素）")
+    grid_flip_x: bool = Field(default=False, description="栅格是否左右镜像（图像第 0 列 = max_x）")
+    grid_flip_y: bool = Field(default=False, description="栅格是否上下镜像（图像第 0 行 = min_y）")
 
     # ===== 关联统计（列表/详情接口附带） =====
     car_ids: Optional[List[int]] = Field(default=None, description="关联车辆ID列表")

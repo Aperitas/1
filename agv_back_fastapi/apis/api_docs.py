@@ -104,6 +104,11 @@ PATH_UPDATE_DESC = PATH_CREATE_DESC
 MAP_ONE_SHOT = section("## 19.")
 CAR_POSE = section("## 20.")
 MAP_ROS = section("## 21.")
+GRID_FLIP = section("### 5.4")
+SELF_TEST = section("## 22.")
+
+# 栅格重画/翻转：§5.4 说明 + §22 自测方法
+GRID_REGENERATE_DESC = "\n\n---\n\n".join(x for x in (GRID_FLIP, SELF_TEST) if x)
 
 
 # 接口列表共用（地图列表 / 详情）

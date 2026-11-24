@@ -15,6 +15,9 @@
    其中 scale/tx/ty 为空时分别回退到 `grid_resolution` / `grid_origin_x` / `grid_origin_y`；
 3) 都没有时按「grid 生成的相似变换」处理（等价 yaw=pitch=roll=0）。
 
+镜像：map.grid_flip_x / grid_flip_y 会把 px / py 取反（等价于图像左右/上下翻转），
+    因此自动体现在像素->点云里；此时 grid_origin_x / grid_origin_y 是「翻转后图像左上角」的点云坐标。
+
 三轴 -> 仿射的推导（与 docs/map-guide.md §15 一致）：
 
     图像平面点取 (u, v, 0)，其中 u = s*px、v = -s*py（图像 y 向下、点云 y 向上）；
@@ -87,6 +90,8 @@ def get_affine(map_obj) -> Optional[Dict[str, object]]:
                     "mode": "affine", "source": "tf",
                     "scale": math.hypot(a, d), "yaw_deg": math.degrees(math.atan2(d, a)),
                     "pitch_deg": 0.0, "roll_deg": 0.0, "tx": c, "ty": f,
+                    "flip_x": bool(getattr(map_obj, "grid_flip_x", False)),
+                    "flip_y": bool(getattr(map_obj, "grid_flip_y", False)),
                 }
         except Exception:
             pass  # 脏数据当作没设置，继续走三轴/回退逻辑
@@ -102,6 +107,14 @@ def get_affine(map_obj) -> Optional[Dict[str, object]]:
     pitch = float(getattr(map_obj, "tf_pitch_deg", None) or 0.0)
     roll = float(getattr(map_obj, "tf_roll_deg", None) or 0.0)
     a, b, c, d, e, f = euler_to_affine(float(scale), yaw, pitch, roll, float(tx), float(ty))
+
+    # 镜像：flip_x 让 px 取反（a、d 变号）；flip_y 让 py 取反（b、e 变号）
+    flip_x = bool(getattr(map_obj, "grid_flip_x", False))
+    flip_y = bool(getattr(map_obj, "grid_flip_y", False))
+    if flip_x:
+        a, d = -a, -d
+    if flip_y:
+        b, e = -b, -e
 
     any_tf = any(v is not None for v in (
         map_obj.tf_scale, map_obj.tf_rot_deg, map_obj.tf_tx, map_obj.tf_ty,
@@ -119,6 +132,7 @@ def get_affine(map_obj) -> Optional[Dict[str, object]]:
         "mode": mode, "source": "tf" if any_tf else "grid",
         "scale": float(scale), "yaw_deg": yaw, "pitch_deg": pitch, "roll_deg": roll,
         "tx": float(tx), "ty": float(ty),
+        "flip_x": flip_x, "flip_y": flip_y,
     }
 
 
@@ -137,6 +151,8 @@ def get_transform(map_obj) -> Optional[Dict[str, object]]:
         "source": aff["source"],
         "mode": aff["mode"],
         "affine": [aff["a"], aff["b"], aff["c"], aff["d"], aff["e"], aff["f"]],
+        "flip_x": bool(aff.get("flip_x", False)),
+        "flip_y": bool(aff.get("flip_y", False)),
     }
 
 
@@ -350,3 +366,49 @@ def resolve_pc_lonlat(map_obj, lon=None, lat=None, pc_x=None, pc_y=None):
         return float(lon), float(lat), None, None, None
     x, y = lonlat_to_pc(map_obj, lon, lat)
     return float(lon), float(lat), x, y, None
+
+
+def get_ros_frame(map_obj):
+    """ROS map_server 导出用的「规范帧」：忽略镜像、只允许等比 + 旋转
+
+    返回 (dict, error)：
+        dict = {"resolution": 米/像素, "yaw": 弧度, "origin_x": 左下角点云X, "origin_y": 左下角点云Y}
+
+    为什么忽略镜像：yaml 的 origin 只有 (x, y, yaw)，表达不了镜像；
+    所以导出时总是按「图像上方 = +y」的规范方向重新生成 PGM，位置由 origin + yaw 描述。
+    """
+    aff = get_affine(map_obj)
+    if aff is None:
+        return None, "缺少「像素->点云」变换，无法导出 ROS 地图"
+
+    # 先撤掉镜像，得到规范方向的线性部分
+    a, b, d, e = aff["a"], aff["b"], aff["d"], aff["e"]
+    if bool(getattr(map_obj, "grid_flip_x", False)):
+        a, d = -a, -d
+    if bool(getattr(map_obj, "grid_flip_y", False)):
+        b, e = -b, -e
+
+    tol = 1e-6 * (abs(a) + abs(d) + 1e-9)
+    if abs(b - d) > tol or abs(e + a) > tol:
+        return None, (
+            "当前变换含 pitch/roll 或剪切，ROS map_server 只支持「等比 + 旋转」，"
+            "请先把 pitch_deg / roll_deg 置 0（自定义 affine 需为相似矩阵）"
+        )
+
+    resolution = math.hypot(a, d)
+    grid_res = float(map_obj.grid_resolution or 0.0)
+    if grid_res and abs(resolution - grid_res) > 1e-6 * max(grid_res, 1e-9):
+        return None, (
+            "变换的缩放(%.6f m/px)与栅格分辨率(%.6f m/px)不一致，"
+            "请先 reset transform 再导出 ROS 地图" % (resolution, grid_res)
+        )
+
+    if map_obj.pc_min_x is None or map_obj.pc_min_y is None:
+        return None, "缺少点云包围盒（pc_min_x / pc_min_y），请先做点云处理"
+
+    return {
+        "resolution": float(resolution),
+        "yaw": math.atan2(d, a),
+        "origin_x": float(map_obj.pc_min_x),
+        "origin_y": float(map_obj.pc_min_y),
+    }, None

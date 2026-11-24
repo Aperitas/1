@@ -185,13 +185,17 @@ def write_png(path: str, pixels: np.ndarray) -> None:
 
 
 def build_grid(xyz: np.ndarray, resolution: float = 0.05, mode: str = "occupancy",
-               z_low: float = 0.15, z_high: float = 1.8, max_side: int = 8000) -> Tuple[np.ndarray, Dict[str, float]]:
+               z_low: float = 0.15, z_high: float = 1.8, max_side: int = 8000,
+               flip_x: bool = False, flip_y: bool = False) -> Tuple[np.ndarray, Dict[str, float]]:
     """俯视投影成栅格图，返回 (pixels, meta)
 
     - mode=occupancy：RGBA，障碍=(25,25,25,255)，可见地面=(255,255,255,255)，无点=透明(0,0,0,0)
     - mode=height：灰度，按高度归一化（越高越亮）
     - 障碍判定：相对地面（z 的 5% 分位）高度落在 [z_low, z_high] 米内的点
-    - 图像第 0 行 = 北（原图正北朝上），第 0 列 = 西
+    - 默认图像第 0 行 = 北（max y），第 0 列 = 西（min x）
+    - flip_y=True：上下镜像（第 0 行变成 min y）；flip_x=True：左右镜像（第 0 列变成 max x）
+    - 翻转后 meta.origin_x/origin_y 换成「新图像左上角」对应的点云坐标，
+      由 utils/coords.get_affine() 把翻转并进仿射，保证像素<->点云仍然自洽
     """
     pts = xyz[np.isfinite(xyz).all(axis=1)]
     if len(pts) == 0:
@@ -232,16 +236,27 @@ def build_grid(xyz: np.ndarray, resolution: float = 0.05, mode: str = "occupancy
             lo, hi = float(maxz[valid].min()), float(maxz[valid].max())
             span = hi - lo if hi > lo else 1.0
             img[valid] = (maxz[valid] - lo) / span * 255.0
-        return img.reshape(height, width).astype(np.uint8), meta
+        pixels = img.reshape(height, width).astype(np.uint8)
+    else:
+        total = np.bincount(flat, minlength=cells)
+        z = pts[:, 2] - z_floor
+        band = (z >= float(z_low)) & (z <= float(z_high))
+        occ = np.bincount(flat[band], minlength=cells) if bool(band.any()) else np.zeros(cells, dtype=np.int64)
+        rgba = np.zeros((cells, 4), dtype=np.uint8)
+        rgba[total > 0] = (255, 255, 255, 255)
+        rgba[occ > 0] = (25, 25, 25, 255)
+        pixels = rgba.reshape(height, width, 4)
 
-    total = np.bincount(flat, minlength=cells)
-    z = pts[:, 2] - z_floor
-    band = (z >= float(z_low)) & (z <= float(z_high))
-    occ = np.bincount(flat[band], minlength=cells) if bool(band.any()) else np.zeros(cells, dtype=np.int64)
-    rgba = np.zeros((cells, 4), dtype=np.uint8)
-    rgba[total > 0] = (255, 255, 255, 255)
-    rgba[occ > 0] = (25, 25, 25, 255)
-    return rgba.reshape(height, width, 4), meta
+    # 镜像：图片翻转后，左上角像素对应的点云坐标变了，origin 必须一起换
+    if flip_y:
+        pixels = np.flipud(pixels)
+        meta["origin_y"] = min_y
+    if flip_x:
+        pixels = np.fliplr(pixels)
+        meta["origin_x"] = max_x
+    meta["flip_x"] = bool(flip_x)
+    meta["flip_y"] = bool(flip_y)
+    return pixels, meta
 def build_grid_in_frame(xyz: np.ndarray, origin_x: float, origin_y: float,
                         width: int, height: int, resolution: float,
                         z_low: float = 0.15, z_high: float = 1.8) -> np.ndarray:

@@ -33,6 +33,7 @@ _COLUMN_MIGRATIONS = {
         "grid_width": "INTEGER", "grid_height": "INTEGER",
         "tf_scale": "FLOAT", "tf_rot_deg": "FLOAT", "tf_tx": "FLOAT", "tf_ty": "FLOAT",
         "tf_pitch_deg": "FLOAT", "tf_roll_deg": "FLOAT", "tf_affine": "VARCHAR",
+        "grid_flip_x": "BOOLEAN DEFAULT 0", "grid_flip_y": "BOOLEAN DEFAULT 0",
     },
 }
 

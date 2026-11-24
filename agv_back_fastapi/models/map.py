@@ -70,6 +70,9 @@ class Map(SQLModel, table=True):
     tf_pitch_deg: Optional[float] = Field(default=None, description="变换：绕 X 轴倾角（度，正交俯视下等价于纵向剪切+压缩）")
     tf_roll_deg: Optional[float] = Field(default=None, description="变换：绕 Y 轴倾角（度）")
     tf_affine: Optional[str] = Field(default=None, description="变换：仿射矩阵 JSON [a,b,c,d,e,f]，等效 x=a*px+b*py+c, y=d*px+e*py+f；设置后优先级高于 yaw/pitch/roll")
+    # ===== 栅格镜像（生成时就翻转，并体现在「像素->点云」变换里，坐标换算自动跟着变） =====
+    grid_flip_x: bool = Field(default=False, description="栅格是否左右镜像（翻转后图像第 0 列 = max_x）")
+    grid_flip_y: bool = Field(default=False, description="栅格是否上下镜像（翻转后图像第 0 行 = min_y）")
     # ===== 以下为历史字段（早期单文件版本），保留但不再读写 =====
     file_path: Optional[str] = Field(default=None, description="历史字段：早期地图文件路径")
     file_type: Optional[str] = Field(default=None, description="历史字段：早期地图文件类型")
