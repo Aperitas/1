@@ -31,3 +31,10 @@ def clean_update(data, *, allow_null: Iterable[str] = ()) -> Dict[str, Any]:
             continue  # 空串 -> 保持原值
         cleaned[key] = value
     return cleaned
+
+
+def blank_to_none(value):
+    # 空字符串（含纯空白）转成 None，供 Optional 数值/布尔字段的 pre 校验使用
+    if isinstance(value, str) and value.strip() == "":
+        return None
+    return value

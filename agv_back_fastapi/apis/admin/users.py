@@ -61,7 +61,7 @@ async def create_new_user(userInfo: CreateUser,login_user: Users = Depends(get_c
 # ------------------新增：编辑用户信息接口 PUT ------------------
 @user_api.put("/{user_id}", summary="管理员修改指定用户信息")
 async def update_target_user(
-        update_data: UserUpdate = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），nickname/avatar/map_id 传 null 表示清空", example={"nickname": "小李", "role": "dispatcher"}),
+        update_data: UserUpdate = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），nickname/avatar/map_id 传 null 表示清空"),
         user_id: int = Path(..., description="待修改用户ID"),
         login_user: Users = Depends(get_current_admin)
 ):

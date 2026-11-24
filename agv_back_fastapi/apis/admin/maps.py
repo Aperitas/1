@@ -386,7 +386,7 @@ async def list_map_users(
 @router.put("/{map_id}", summary="修改地图信息")
 async def update_map(
         map_id: int = ApiPath(..., description="地图ID"),
-        data: MapUpdate = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），description/fallback_map_id 传 null 表示清空", example={"name": "南科大-1F"}),
+        data: MapUpdate = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），description/fallback_map_id 传 null 表示清空"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):

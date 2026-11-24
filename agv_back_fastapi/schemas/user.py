@@ -54,8 +54,10 @@ class OutputUser(UserIn) :
     map_id: Optional[int] = Field(default=None, description="默认地图ID（登录后默认打开的地图）")
     # ===============================
 
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from typing import Optional
+
+from utils.patch import blank_to_none
 
 class UserUpdate(BaseModel):
     """管理员修改某个用户时使用的请求体（只传需要修改的字段）"""
@@ -70,6 +72,10 @@ class UserUpdate(BaseModel):
     map_ids: Optional[List[int]] = Field(default=None, description="账户负责的地图ID列表（传了就整体覆盖）")
     # ===========================================================
 
+
+    @validator("isActive", "isAdmin", "map_id", pre=True)
+    def _blank_to_none(cls, value):
+        return blank_to_none(value)
 
 class UserMapSetIn(BaseModel):
     """设置账户负责的地图（覆盖式）"""

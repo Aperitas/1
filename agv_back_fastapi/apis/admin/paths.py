@@ -154,7 +154,7 @@ async def get_path(
 @router.put("/{path_id}", summary="修改路线（名称、类型、节点序列等）")
 async def update_path(
         path_id: int = ApiPath(..., description="路线ID"),
-        data: PathUpdate = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），car_id 传 null 表示解除专属", example={"name": "A-B 往返"}),
+        data: PathUpdate = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），car_id 传 null 表示解除专属"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):

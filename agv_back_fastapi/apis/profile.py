@@ -42,7 +42,7 @@ async def get_my_profile(user: Users = Depends(get_current_user)) :
 
 
 @profile_api.put("", summary="修改自己的资料")
-async def update_my_profile(data: ProfileUpdateIn = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），nickname/avatar 传 null 表示清空", example={"nickname": "小李"}),user: Users = Depends(get_current_user)) :
+async def update_my_profile(data: ProfileUpdateIn = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），nickname/avatar 传 null 表示清空"),user: Users = Depends(get_current_user)) :
     """ 修改自己的用户名/昵称/邮箱/手机/头像；角色与密码不能在这里修改 """
     update_data = clean_update(data, allow_null={"nickname", "avatar"})
     # users.nickname 在库里是 NOT NULL：传 null 表示清空昵称，落库用空串

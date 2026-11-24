@@ -1,4 +1,7 @@
 from sqlmodel import SQLModel, Field
+from pydantic import validator
+
+from utils.patch import blank_to_none
 from typing import Optional, Dict, Any
 from datetime import datetime
 
@@ -53,6 +56,10 @@ class MapUpdate(SQLModel):
     right_bottom_lat: Optional[float] = Field(default=None, description="右下角纬度（等价 lat_min）")
     fallback_map_id: Optional[int] = Field(default=None, description="兜底地图ID（必须是 local 类型）")
 
+
+    @validator("center_lon", "center_lat", "zoom", "lon_min", "lat_min", "lon_max", "lat_max", "left_top_lon", "left_top_lat", "right_bottom_lon", "right_bottom_lat", "fallback_map_id", pre=True)
+    def _blank_to_none(cls, value):
+        return blank_to_none(value)
 
 class MapOut(SQLModel):
     """地图信息（返回结构）"""

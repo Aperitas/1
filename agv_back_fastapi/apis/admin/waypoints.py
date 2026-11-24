@@ -68,7 +68,7 @@ async def get_waypoint(
 @router.put("/{wp_id}", summary="修改路径点信息")
 async def update_waypoint(
         wp_id: int = Path(..., description="路径点ID"),
-        data: WaypointUpdate = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），description 传 null 表示清空", example={"description": "门口停靠点"}),
+        data: WaypointUpdate = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），description 传 null 表示清空"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):

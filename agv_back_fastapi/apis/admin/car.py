@@ -16,10 +16,10 @@ from models.user.users import Users
 from apis.access import visible_map_ids
 from apis.views import car_payload
 from utils.video_streams import dump_streams, parse_streams
-from utils.patch import clean_update
+from utils.patch import blank_to_none, clean_update
 from utils.resp_code import resp_200, resp_500, resp_400
 from apis.websocket.process import manager
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 car_api = APIRouter(prefix='/cars')
 
@@ -173,10 +173,14 @@ class CarUpdateIn(BaseModel):
         description="视频流字典（传了就整体覆盖，传 {} 表示清空）",
     )
 
+    @validator("weight", "lon", "lat", "yaw", "status", pre=True)
+    def _blank_to_none(cls, value):
+        return blank_to_none(value)
+
 @car_api.put("/{car_id}/update", summary="修改小车信息")
 async def update_car(
     car_id: int = ApiPath(..., description="车辆ID"),
-    data: CarUpdateIn = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），description 传 null 表示清空", example={"name": "轮椅", "status": 1}),
+    data: CarUpdateIn = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），description 传 null 表示清空"),
     session: Session = Depends(get_session),
     user: Users = Depends(get_current_user)
 ):

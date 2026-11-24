@@ -1,4 +1,7 @@
 from sqlmodel import SQLModel, Field
+from pydantic import validator
+
+from utils.patch import blank_to_none
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -25,6 +28,10 @@ class SiteUpdate(SQLModel):
     stop_mode: Optional[str] = Field(default=None, description="停靠模式：timed / wait_command")
     description: Optional[str] = Field(default=None, description="站点备注")
     map_id: Optional[int] = Field(default=None, description="所属地图ID")
+
+    @validator("lon", "lat", "dwell_time", "map_id", pre=True)
+    def _blank_to_none(cls, value):
+        return blank_to_none(value)
 
 class SiteOut(SQLModel):
     """站点信息（返回结构）"""
@@ -54,6 +61,10 @@ class WaypointUpdate(SQLModel):
     lat: Optional[float] = Field(default=None, description="纬度")
     description: Optional[str] = Field(default=None, description="备注")
     map_id: Optional[int] = Field(default=None, description="所属地图ID")
+
+    @validator("lon", "lat", "map_id", pre=True)
+    def _blank_to_none(cls, value):
+        return blank_to_none(value)
 
 class WaypointOut(SQLModel):
     """路径点信息（返回结构）"""
@@ -92,6 +103,10 @@ class PathUpdate(SQLModel):
     car_id: Optional[int] = Field(default=None, description="专属车辆ID")
     map_id: Optional[int] = Field(default=None, description="所属地图ID")
     is_temp: Optional[bool] = Field(default=None, description="是否临时路径")
+
+    @validator("car_id", "map_id", "is_temp", pre=True)
+    def _blank_to_none(cls, value):
+        return blank_to_none(value)
 
 class PathOut(SQLModel):
     """路线信息（返回结构）"""
