@@ -1,4 +1,5 @@
 import datetime
+import os
 from typing import Optional, List, Dict
 from schemas.car_command import CarCommandIn, ControlModeIn, CarMapSetIn
 from fastapi import APIRouter, Depends, Query, Body, Path as ApiPath
@@ -52,6 +53,21 @@ def _replace_car_maps(session: Session, car_id: int, map_ids: List[int]) -> None
     session.execute(delete(CarMapLink).where(CarMapLink.car_id == car_id))
     for map_id in map_ids:
         session.add(CarMapLink(car_id=car_id, map_id=map_id))
+
+
+def _map_file_url(path):
+    # 磁盘路径 -> /static 访问地址
+    return f"/static/maps/{os.path.basename(path)}" if path else None
+
+
+def _map_bounds(map_obj: Map):
+    # 左上/右下角点（四个值齐全时返回）
+    if None in (map_obj.lon_min, map_obj.lat_min, map_obj.lon_max, map_obj.lat_max):
+        return None
+    return {
+        "left_top": {"lon": map_obj.lon_min, "lat": map_obj.lat_max},
+        "right_bottom": {"lon": map_obj.lon_max, "lat": map_obj.lat_min},
+    }
 
 
 # ===== 视频流辅助函数 =====
@@ -304,6 +320,9 @@ async def get_car_maps(
             "lat_min": m.lat_min,
             "lon_max": m.lon_max,
             "lat_max": m.lat_max,
+            "pointcloud_file_url": _map_file_url(m.pointcloud_file_path),
+            "grid_file_url": _map_file_url(m.grid_file_path),
+            "bounds": _map_bounds(m),
         } for m in maps],
     })
 

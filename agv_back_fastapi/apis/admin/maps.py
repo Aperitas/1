@@ -17,7 +17,9 @@ from utils.patch import clean_update
 from core.security import get_current_user, get_current_admin
 from models.user import Users
 from typing import List, Optional
+import mimetypes
 import os
+import re
 import shutil
 import json
 from datetime import datetime
@@ -26,6 +28,30 @@ from fastapi.concurrency import run_in_threadpool
 router = APIRouter(prefix="/admin/maps", tags=["地图管理"])
 
 VALID_MAP_TYPES = {t.value for t in MapType}
+
+# 允许上传的文件类型（按槽位区分）
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
+POINTCLOUD_SUFFIXES = {".pcd", ".ply", ".las", ".laz", ".xyz", ".zip"}
+
+# Windows 下 mimetypes 可能缺少部分类型映射；显式注册后，上传返回值与 StaticFiles 的 Content-Type 都会正确
+for _ext, _ct in (
+    (".webp", "image/webp"),
+    (".tif", "image/tiff"),
+    (".tiff", "image/tiff"),
+    (".bmp", "image/bmp"),
+    (".pcd", "application/octet-stream"),
+    (".ply", "application/octet-stream"),
+    (".las", "application/octet-stream"),
+    (".laz", "application/octet-stream"),
+    (".xyz", "text/plain"),
+):
+    mimetypes.add_type(_ct, _ext)
+
+
+def _safe_stem(filename) -> str:
+    # 去掉目录与特殊字符，防止路径穿越；长度截断
+    stem = os.path.splitext(os.path.basename(filename or ""))[0] or "file"
+    return re.sub(r"[^\w.\-]", "_", stem)[:80]
 
 
 def _apply_corner_fields(payload: dict) -> dict:
@@ -146,13 +172,19 @@ async def upload_map_file(
     if kind not in ("pointcloud", "grid"):
         return resp_400(msg="kind 只能是 pointcloud 或 grid")
 
+    suffix = os.path.splitext(file.filename or "")[1].lower()
+    allowed = IMAGE_SUFFIXES if kind == "grid" else POINTCLOUD_SUFFIXES
+    if suffix not in allowed:
+        readable = " / ".join(sorted(s.lstrip(".") for s in allowed))
+        return resp_400(msg=f"{'栅格图片' if kind == 'grid' else '点云文件'}仅支持：{readable}")
+
     map_obj = session.get(Map, map_id)
     if not map_obj:
         return resp_400(msg="地图不存在")
 
     # 保存文件（文件名带类型前缀，避免点云与栅格互相覆盖）
     prefix = "pc" if kind == "pointcloud" else "grid"
-    filename = f"map_{map_id}_{prefix}_{file.filename}"
+    filename = f"map_{map_id}_{prefix}_{_safe_stem(file.filename)}{suffix}"
     file_path = os.path.join(MAP_UPLOAD_DIR, filename)
 
     # 定义异步保存函数，放入线程池执行，避免阻塞主服务
@@ -164,6 +196,13 @@ async def upload_map_file(
         await run_in_threadpool(save_file)
     except Exception as e:
         return resp_500(msg=f"文件保存失败：{str(e)}")
+
+    if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+        try:
+            os.remove(file_path)
+        except Exception:
+            pass
+        return resp_400(msg="上传的文件为空")
 
     # 删除同类型旧文件
     old_path = map_obj.pointcloud_file_path if kind == "pointcloud" else map_obj.grid_file_path
@@ -192,12 +231,14 @@ async def upload_map_file(
     session.commit()
     session.refresh(map_obj)
 
+    content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     return resp_200(
         msg=f"{'点云' if kind == 'pointcloud' else '栅格'}文件上传成功",
         data={
             "map_id": map_obj.id,
             "kind": kind,
             "file_type": file_type,
+            "content_type": content_type,
             "file_size": file_size,
             "file_url": _file_url(file_path),
         }
