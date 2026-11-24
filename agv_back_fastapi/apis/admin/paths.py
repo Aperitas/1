@@ -1,11 +1,17 @@
 from fastapi import APIRouter, Depends, Body, Path as ApiPath
 from sqlmodel import Session, select
 from db.session import get_session
+import os
+
 from models.path import Path
+from models.site import Site
+from models.waypoint import Waypoint
+from utils.coords import convert as convert_coords, has_bounds as map_has_bounds, has_grid as map_has_grid
 from models.map import Map
 from models.car.map_link import CarMapLink
 from apis.access import visible_map_ids
 from schemas.path import PathCreate, PathUpdate, PathOut
+from schemas.resp import ApiResponse
 from utils.resp_code import resp_200, resp_400, resp_500
 from utils.patch import clean_update
 from core.security import get_current_user
@@ -15,6 +21,136 @@ from fastapi import Query
 from typing import List, Dict, Any
 import json
 router = APIRouter(prefix="/admin/paths", tags=["路线管理"])
+
+def _map_brief(session: Session, map_id):
+    """路径返回里内嵌的地图信息（含 bounds / 文件地址 / 栅格映射）"""
+    if map_id is None:
+        return None
+    map_obj = session.get(Map, map_id)
+    if not map_obj:
+        return None
+
+    def _url(path):
+        return "/static/maps/%s" % os.path.basename(path) if path else None
+
+    bounds = None
+    if None not in (map_obj.lon_min, map_obj.lat_min, map_obj.lon_max, map_obj.lat_max):
+        bounds = {
+            "left_top": {"lon": map_obj.lon_min, "lat": map_obj.lat_max},
+            "right_bottom": {"lon": map_obj.lon_max, "lat": map_obj.lat_min},
+        }
+    return {
+        "id": map_obj.id, "name": map_obj.name, "map_type": map_obj.map_type,
+        "center_lon": map_obj.center_lon, "center_lat": map_obj.center_lat, "zoom": map_obj.zoom,
+        "bounds": bounds,
+        "grid_file_url": _url(map_obj.grid_file_path),
+        "pointcloud_file_url": _url(map_obj.pointcloud_file_path),
+        "grid_resolution": map_obj.grid_resolution,
+        "grid_origin_x": map_obj.grid_origin_x, "grid_origin_y": map_obj.grid_origin_y,
+        "grid_width": map_obj.grid_width, "grid_height": map_obj.grid_height,
+    }
+
+
+def _node_lonlat(session: Session, node: dict, cache: dict):
+    """解析节点的经纬度（site / waypoint）"""
+    ntype = (node.get("type") or "").lower()
+    nid = node.get("id")
+    if nid is None:
+        return None, None
+    key = (ntype, nid)
+    if key in cache:
+        return cache[key]
+    obj = None
+    if ntype == "site":
+        obj = session.get(Site, nid)
+    elif ntype == "waypoint":
+        obj = session.get(Waypoint, nid)
+    result = (getattr(obj, "lon", None), getattr(obj, "lat", None))
+    cache[key] = result
+    return result
+
+
+def _path_payload(session: Session, path: Path) -> dict:
+    """路线标准输出：node_chain 回填 loc(经纬度)/pc(点云)，并内嵌 map 信息"""
+    data = path.dict()
+    try:
+        nodes = json.loads(data.get("node_chain") or "[]")
+    except Exception:
+        nodes = []
+    map_obj = session.get(Map, path.map_id) if path.map_id is not None else None
+    can_convert = bool(map_obj is not None and map_has_grid(map_obj) and map_has_bounds(map_obj))
+    cache = {}
+    enriched = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            enriched.append(node)
+            continue
+        item = dict(node)
+        lon, lat = _node_lonlat(session, node, cache)
+        item["loc"] = None if lon is None or lat is None else {"lon": lon, "lat": lat}
+        item["pc"] = None
+        if can_convert and lon is not None and lat is not None:
+            conv = convert_coords(map_obj, lon=lon, lat=lat)
+            item["pc"] = {"x": conv["x"], "y": conv["y"], "px": conv["px"], "py": conv["py"]}
+        enriched.append(item)
+    data["node_chain"] = enriched
+    data["map"] = _map_brief(session, path.map_id)
+    return data
+
+
+def resolve_path_points(session: Session, path: Path, frame: str) -> dict:
+    """按 frame 解析路线节点坐标，供 /points 接口与车端使用"""
+    map_obj = session.get(Map, path.map_id) if path.map_id is not None else None
+    can_grid = bool(map_obj is not None and map_has_grid(map_obj))
+    can_geo = bool(can_grid and map_has_bounds(map_obj))
+    cache = {}
+    try:
+        nodes = json.loads(path.node_chain or "[]")
+    except Exception:
+        nodes = []
+    points = []
+    missing = 0
+    for idx, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            continue
+        lon, lat = _node_lonlat(session, node, cache)
+        conv = convert_coords(map_obj, lon=lon, lat=lat) if (can_geo and lon is not None and lat is not None) else {}
+        item = {
+            "index": idx,
+            "type": node.get("type"),
+            "id": node.get("id"),
+            "name": None,
+            "stop_mode": None,
+            "dwell_time": None,
+            "lon": lon, "lat": lat,
+            "px": conv.get("px"), "py": conv.get("py"),
+            "x": conv.get("x"), "y": conv.get("y"),
+        }
+        if (node.get("type") or "").lower() == "site":
+            site = session.get(Site, node.get("id"))
+            if site is not None:
+                item["name"] = site.name
+                item["stop_mode"] = site.stop_mode
+                item["dwell_time"] = site.dwell_time
+        elif (node.get("type") or "").lower() == "waypoint":
+            wp = session.get(Waypoint, node.get("id"))
+            if wp is not None:
+                item["name"] = wp.name
+        if frame == "pc" and (item["x"] is None or item["y"] is None):
+            missing += 1
+        if frame == "grid" and (item["px"] is None or item["py"] is None):
+            missing += 1
+        if frame == "lonlat" and (item["lon"] is None or item["lat"] is None):
+            missing += 1
+        points.append(item)
+    return {
+        "path_id": path.id, "name": path.name, "frame": frame,
+        "map_id": path.map_id, "map_type": path.map_type,
+        "has_grid": can_grid, "has_bounds": can_geo,
+        "missing": missing, "points": points,
+    }
+
+
 
 
 def _find_temp_path(session: Session, car_id: int, map_id: int, exclude_path_id: Optional[int] = None):
@@ -99,7 +235,7 @@ async def create_path(
         session.rollback()
         return resp_500(msg=f"保存失败：{str(e)}")
 
-@router.get("/", summary="获取所有路线（可筛选类型、小车或地图）")
+@router.get("/", summary="获取所有路线（可筛选类型、小车或地图）", response_model=ApiResponse[List[PathOut]])
 async def list_paths(
         path_type: Optional[str] = Query(None, description="路线类型: 吸附道路/贝塞尔曲线/折线"),
         car_id: Optional[int] = Query(None, description="关联小车ID"),
@@ -129,12 +265,10 @@ async def list_paths(
     paths = session.exec(query).all()
     result = []
     for p in paths:
-        d = p.dict()
-        d["node_chain"] = json.loads(d["node_chain"])
-        result.append(d)
+        result.append(_path_payload(session, p))
     return resp_200(data=result)
 
-@router.get("/{path_id}", summary="获取单条路线详情（含完整节点坐标）")
+@router.get("/{path_id}", summary="获取单条路线详情（含完整节点坐标）", response_model=ApiResponse[PathOut])
 async def get_path(
         path_id: int = ApiPath(..., description="路线ID"),
         session: Session = Depends(get_session),
@@ -147,9 +281,34 @@ async def get_path(
     visible = visible_map_ids(session, user)
     if visible is not None and path.map_id not in visible:
         return resp_400(msg="无权访问该地图的路线")
-    out = path.dict()
-    out["node_chain"] = json.loads(out["node_chain"])
-    return resp_200(data=out)
+    return resp_200(data=_path_payload(session, path))
+
+@router.get("/{path_id}/points", summary="把路线节点解析成坐标（经纬度 / 栅格像素 / 点云米）")
+async def get_path_points(
+        path_id: int = ApiPath(..., description="路线ID"),
+        frame: str = Query("lonlat", description="坐标系：lonlat=经纬度 / grid=栅格像素(px,py) / pc=点云米(x,y，车端导航用)"),
+        session: Session = Depends(get_session),
+        user: Users = Depends(get_current_user)
+):
+    """按 node_chain 顺序返回每个节点的坐标。
+
+    - frame=lonlat：lon / lat（节点自带经纬度即可）
+    - frame=grid：px / py（需要地图已完成点云处理，且有栅格映射）
+    - frame=pc：x / y（点云米制坐标；地图做过点云处理 + 填了 bounds 时，同时返回 lon/lat）
+    """
+    if frame not in ("lonlat", "grid", "pc"):
+        return resp_400(msg="frame 只能是 lonlat / grid / pc")
+    path = session.get(Path, path_id)
+    if not path:
+        return resp_400(msg="路线不存在")
+    visible = visible_map_ids(session, user)
+    if visible is not None and path.map_id not in visible:
+        return resp_400(msg="无权访问该地图的路线")
+    data = resolve_path_points(session, path, frame)
+    if frame in ("grid", "pc") and not data["has_grid"]:
+        return resp_400(msg="该地图还没有栅格↔点云映射，请先调用 POST /admin/maps/{map_id}/pointcloud/process")
+    return resp_200(data=data)
+
 
 @router.put("/{path_id}", summary="修改路线（名称、类型、节点序列等）")
 async def update_path(

@@ -24,6 +24,11 @@ _COLUMN_MIGRATIONS = {
         "pointcloud_file_size": "INTEGER", "pointcloud_file_upload_time": "DATETIME",
         "grid_file_path": "VARCHAR", "grid_file_type": "VARCHAR",
         "grid_file_size": "INTEGER", "grid_file_upload_time": "DATETIME",
+        "pointcloud_point_count": "INTEGER",
+        "pc_min_x": "FLOAT", "pc_max_x": "FLOAT", "pc_min_y": "FLOAT",
+        "pc_max_y": "FLOAT", "pc_min_z": "FLOAT", "pc_max_z": "FLOAT",
+        "grid_origin_x": "FLOAT", "grid_origin_y": "FLOAT", "grid_resolution": "FLOAT",
+        "grid_width": "INTEGER", "grid_height": "INTEGER",
     },
 }
 

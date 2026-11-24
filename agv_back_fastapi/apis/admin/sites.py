@@ -4,6 +4,7 @@ from db.session import get_session
 from models.site import Site, StopMode
 from apis.access import visible_map_ids
 from schemas.path import SiteCreate, SiteUpdate, SiteOut
+from schemas.resp import ApiResponse
 from utils.resp_code import resp_200, resp_400, resp_500
 from utils.patch import clean_update
 from core.security import get_current_user
@@ -52,7 +53,7 @@ async def create_site(
         session.rollback()
         return resp_500(msg=f"创建失败：{str(e)}")
 
-@router.get("/", summary="获取所有站点列表")
+@router.get("/", summary="获取所有站点列表", response_model=ApiResponse[List[SiteOut]])
 async def list_sites(
         map_id: Optional[int] = Query(None, description="按地图ID筛选"),
         session: Session = Depends(get_session),
@@ -70,7 +71,7 @@ async def list_sites(
     sites = session.exec(query).all()
     return resp_200(data=[s.dict() for s in sites])
 
-@router.get("/{site_id}", summary="获取单个站点详情")
+@router.get("/{site_id}", summary="获取单个站点详情", response_model=ApiResponse[SiteOut])
 async def get_site(
         site_id: int = Path(..., description="站点ID"),
         session: Session = Depends(get_session),

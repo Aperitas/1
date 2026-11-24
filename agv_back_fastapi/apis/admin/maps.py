@@ -12,8 +12,11 @@ from apis.access import visible_map_ids
 from apis.views import car_payload
 from core.logger import logger
 from schemas.map import MapCreate, MapUpdate, MapOut
+from schemas.resp import ApiResponse
 from utils.resp_code import resp_200, resp_400, resp_500
 from utils.patch import clean_update
+from utils.pcd import PcdFormatError, build_grid, read_pcd_xyz, voxel_downsample, write_pcd_binary, write_png
+from utils.coords import convert as convert_coords, has_bounds as map_has_bounds, has_grid as map_has_grid
 from core.security import get_current_user, get_current_admin
 from models.user import Users
 from typing import List, Optional
@@ -21,6 +24,7 @@ import mimetypes
 import os
 import re
 import shutil
+import time
 import json
 from datetime import datetime
 from fastapi.concurrency import run_in_threadpool
@@ -245,6 +249,182 @@ async def upload_map_file(
     )
 
 
+@router.post("/{map_id}/pointcloud/process", summary="点云滤波（体素降采样）并可生成栅格图")
+async def process_pointcloud(
+        map_id: int = ApiPath(..., description="地图ID"),
+        leaf_size: float = Query(0.05, description="体素降采样边长（米）；传 0 表示不降采样"),
+        grid_resolution: float = Query(0.05, description="栅格分辨率（米/像素）"),
+        grid_mode: str = Query("occupancy", description="栅格模式：occupancy=占用（黑白） / height=高度灰度"),
+        z_low: float = Query(0.15, description="障碍判定下限：相对地面的高度（米）"),
+        z_high: float = Query(1.8, description="障碍判定上限：相对地面的高度（米）"),
+        replace: bool = Query(False, description="是否用降采样结果覆盖原点云文件"),
+        generate_grid: bool = Query(True, description="是否同时生成/覆盖栅格图"),
+        session: Session = Depends(get_session),
+        user: Users = Depends(get_current_user)
+):
+    """对已上传的 .pcd 做体素降采样，可选同时生成俯视占用栅格图。
+
+    - 处理后地图的 pointcloud_file_* 指向降采样文件（原文件保留在磁盘，不删除）；
+    - 同时回填 pc_min/max、grid_origin/resolution/width/height，供 /coords 换算；
+    - leaf_size / grid_resolution 单位都是米，默认 0.05（5cm）。
+    """
+    if not user.isAdmin:
+        return resp_400(msg="仅管理员可操作")
+    if grid_mode not in ("occupancy", "height"):
+        return resp_400(msg="grid_mode 只能是 occupancy 或 height")
+
+    map_obj = session.get(Map, map_id)
+    if not map_obj:
+        return resp_400(msg="地图不存在")
+    src = map_obj.pointcloud_file_path
+    if not src or not os.path.exists(src):
+        return resp_400(msg="该地图还没有点云文件，请先上传")
+    if (map_obj.pointcloud_file_type or "").lower() != "pcd":
+        return resp_400(msg="目前只支持 .pcd 点云滤波（请先转成 pcd）")
+
+    before_size = os.path.getsize(src)
+    started = time.time()
+    try:
+        xyz = read_pcd_xyz(src)
+        before_points = int(len(xyz))
+        pts = voxel_downsample(xyz, leaf_size) if leaf_size and leaf_size > 0 else xyz
+        after_points = int(len(pts))
+
+        stem = os.path.splitext(os.path.basename(src))[0]
+        out_path = src if replace else os.path.join(MAP_UPLOAD_DIR, "%s_down.pcd" % stem)
+        write_pcd_binary(out_path, pts)
+
+        now = datetime.now()
+        map_obj.pointcloud_file_path = out_path
+        map_obj.pointcloud_file_type = "pcd"
+        map_obj.pointcloud_file_size = os.path.getsize(out_path)
+        map_obj.pointcloud_file_upload_time = now
+        map_obj.pointcloud_point_count = after_points
+        map_obj.pc_min_x = float(pts[:, 0].min())
+        map_obj.pc_max_x = float(pts[:, 0].max())
+        map_obj.pc_min_y = float(pts[:, 1].min())
+        map_obj.pc_max_y = float(pts[:, 1].max())
+        map_obj.pc_min_z = float(pts[:, 2].min())
+        map_obj.pc_max_z = float(pts[:, 2].max())
+
+        grid_data = None
+        if generate_grid:
+            pixels, meta = build_grid(pts, resolution=grid_resolution, mode=grid_mode, z_low=z_low, z_high=z_high)
+            grid_name = "map_%d_grid_auto_%sm.png" % (map_id, str(grid_resolution).replace(".", "_"))
+            grid_path = os.path.join(MAP_UPLOAD_DIR, grid_name)
+            write_png(grid_path, pixels)
+            old_grid = map_obj.grid_file_path
+            if old_grid and os.path.exists(old_grid) and os.path.abspath(old_grid) != os.path.abspath(grid_path):
+                try:
+                    os.remove(old_grid)
+                except Exception as exc:
+                    logger.warning("清理旧栅格失败: %s" % exc)
+            map_obj.grid_file_path = grid_path
+            map_obj.grid_file_type = "png"
+            map_obj.grid_file_size = os.path.getsize(grid_path)
+            map_obj.grid_file_upload_time = now
+            map_obj.grid_origin_x = meta["origin_x"]
+            map_obj.grid_origin_y = meta["origin_y"]
+            map_obj.grid_resolution = meta["resolution"]
+            map_obj.grid_width = meta["width"]
+            map_obj.grid_height = meta["height"]
+            grid_data = {
+                "grid_file_url": _file_url(grid_path),
+                "grid_width": meta["width"],
+                "grid_height": meta["height"],
+                "grid_resolution": meta["resolution"],
+                "grid_origin_x": meta["origin_x"],
+                "grid_origin_y": meta["origin_y"],
+                "z_floor": meta["z_floor"],
+            }
+
+        session.add(map_obj)
+        session.commit()
+        session.refresh(map_obj)
+
+        return resp_200(msg="点云处理完成", data={
+            "map_id": map_id,
+            "before_points": before_points,
+            "after_points": after_points,
+            "before_size": before_size,
+            "after_size": map_obj.pointcloud_file_size,
+            "pointcloud_file_url": _file_url(map_obj.pointcloud_file_path),
+            "bounds_of_cloud": {
+                "min_x": map_obj.pc_min_x, "max_x": map_obj.pc_max_x,
+                "min_y": map_obj.pc_min_y, "max_y": map_obj.pc_max_y,
+                "min_z": map_obj.pc_min_z, "max_z": map_obj.pc_max_z,
+            },
+            "grid": grid_data,
+            "elapsed_ms": int((time.time() - started) * 1000),
+        })
+    except PcdFormatError as e:
+        session.rollback()
+        return resp_400(msg=str(e))
+    except ValueError as e:
+        session.rollback()
+        return resp_400(msg=str(e))
+    except Exception as e:
+        session.rollback()
+        logger.error("点云处理失败: %s" % e)
+        return resp_500(msg="点云处理失败: %s" % str(e))
+
+
+@router.get("/{map_id}/coords", summary="坐标换算：栅格像素 / 点云 / 经纬度")
+async def map_coords(
+        map_id: int = ApiPath(..., description="地图ID"),
+        px: Optional[float] = Query(None, description="栅格像素列（0=左/西，向右增大）"),
+        py: Optional[float] = Query(None, description="栅格像素行（0=上/北，向下增大）"),
+        x: Optional[float] = Query(None, description="点云坐标 X（米）"),
+        y: Optional[float] = Query(None, description="点云坐标 Y（米）"),
+        lon: Optional[float] = Query(None, description="经度（WGS84）"),
+        lat: Optional[float] = Query(None, description="纬度（WGS84）"),
+        session: Session = Depends(get_session),
+        user: Users = Depends(get_current_user)
+):
+    """三套坐标互转：传任意一组完整的 (px,py) / (x,y) / (lon,lat)，返回能算出来的全部坐标。
+
+    - 需要地图已做过「点云处理」（提供 grid_origin/resolution/width/height）；
+    - 经纬度换算还需要地图的 bounds（lon_min/lat_min/lon_max/lat_max）；
+    - 像素 <-> 点云：x = grid_origin_x + px*res，y = grid_origin_y - py*res；
+    - 像素 <-> 经纬度：按 bounds 线性铺满整幅图（第 0 行=北，第 0 列=西）。
+    """
+    map_obj = session.get(Map, map_id)
+    if not map_obj:
+        return resp_400(msg="地图不存在")
+    visible = visible_map_ids(session, user)
+    if visible is not None and map_id not in visible:
+        return resp_400(msg="无权访问该地图")
+
+    pairs = [(px, py, "像素"), (x, y, "点云"), (lon, lat, "经纬度")]
+    given = [item for item in pairs if item[0] is not None and item[1] is not None]
+    if not given:
+        return resp_400(msg="请传一组完整坐标：px+py / x+y / lon+lat")
+    if len(given) > 1:
+        return resp_400(msg="一次只传一组坐标，避免歧义")
+    if not map_has_grid(map_obj):
+        return resp_400(msg="该地图还没有栅格↔点云映射信息，请先调用 POST /admin/maps/{id}/pointcloud/process")
+
+    result = convert_coords(map_obj, px=px, py=py, x=x, y=y, lon=lon, lat=lat)
+    bounds_ok = map_has_bounds(map_obj)
+    if not bounds_ok:
+        result["lon"] = None
+        result["lat"] = None
+    return resp_200(data={
+        "map_id": map_id,
+        "has_grid": True,
+        "has_bounds": bounds_ok,
+        "grid_resolution": map_obj.grid_resolution,
+        "grid_origin_x": map_obj.grid_origin_x,
+        "grid_origin_y": map_obj.grid_origin_y,
+        "grid_width": map_obj.grid_width,
+        "grid_height": map_obj.grid_height,
+        "input": given[0][2],
+        "px": result["px"], "py": result["py"],
+        "x": result["x"], "y": result["y"],
+        "lon": result["lon"], "lat": result["lat"],
+    })
+
+
 @router.delete("/{map_id}/files/{kind}", summary="删除地图的点云/栅格文件")
 async def delete_map_file(
         map_id: int = ApiPath(..., description="地图ID"),
@@ -282,7 +462,7 @@ async def delete_map_file(
     return resp_200(msg="文件已删除", data={"map_id": map_id, "kind": kind})
 
 
-@router.get("/", summary="获取所有地图列表")
+@router.get("/", summary="获取所有地图列表", response_model=ApiResponse[List[MapOut]])
 async def list_maps(
         map_type: Optional[str] = Query(None, description="按类型筛选：tianditu=天地图 / local=本地地图"),
         session: Session = Depends(get_session),
@@ -319,7 +499,7 @@ async def list_maps(
     return resp_200(data=result)
 
 
-@router.get("/{map_id}", summary="获取单个地图详情")
+@router.get("/{map_id}", summary="获取单个地图详情", response_model=ApiResponse[MapOut])
 async def get_map(
         map_id: int = ApiPath(..., description="地图ID"),
         session: Session = Depends(get_session),

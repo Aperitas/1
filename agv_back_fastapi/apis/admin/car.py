@@ -254,6 +254,36 @@ async def update_car(
         logger.error(f"修改小车信息失败: {e}")
         return resp_500(msg=f"修改失败: {str(e)}")
 
+@car_api.get("/{car_id}/paths/{path_id}/points", summary="车端取路线坐标（默认点云米制）")
+async def get_car_path_points(
+        car_id: int = ApiPath(..., description="车辆ID"),
+        path_id: int = ApiPath(..., description="路线ID"),
+        frame: str = Query("pc", description="坐标系：pc=点云米(x,y) / lonlat=经纬度 / grid=栅格像素"),
+        session: Session = Depends(get_session),
+        user: Users = Depends(get_current_user)
+):
+    """车端导航用：返回该路线在点云坐标系下的有序点（米），站点附带 stop_mode / dwell_time。
+
+    """
+    if frame not in ("lonlat", "grid", "pc"):
+        return resp_400(msg="frame 只能是 lonlat / grid / pc")
+    car = session.get(Cars, car_id)
+    if not car:
+        return resp_400(msg="小车不存在")
+    path = session.get(Path, path_id)
+    if not path:
+        return resp_400(msg="路线不存在")
+
+    from apis.admin.paths import resolve_path_points
+    data = resolve_path_points(session, path, frame)
+    if frame in ("grid", "pc") and not data["has_grid"]:
+        return resp_400(msg="该地图还没有栅格↔点云映射，请先对地图做点云处理")
+    data["car_id"] = car_id
+    data["car_map_ids"] = _get_car_map_ids(session, car_id)
+    data["path_in_car_maps"] = (path.map_id in data["car_map_ids"]) if path.map_id is not None else False
+    return resp_200(data=data)
+
+
 @car_api.get("/list", summary="获取小车列表（可按地图ID筛选）")
 async def get_car_list(
     map_id: Optional[int] = Query(None, description="按地图ID筛选：只返回该地图上的小车"),
