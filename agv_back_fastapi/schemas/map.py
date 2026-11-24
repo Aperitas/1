@@ -61,6 +61,25 @@ class MapUpdate(SQLModel):
     def _blank_to_none(cls, value):
         return blank_to_none(value)
 
+class MapTransformIn(SQLModel):
+    """设置地图变换（像素 -> 点云）：可缩放/平移/旋转；与其他 update 接口一致，只传要改的字段"""
+    scale: Optional[float] = Field(default=None, description="米/像素（必须 > 0）")
+    rot_deg: Optional[float] = Field(default=None, description="旋转角 yaw（度，绕 Z 轴，逆时针为正）")
+    pitch_deg: Optional[float] = Field(default=None, description="绕 X 轴倾角（度）：正交俯视下表现为纵向压缩+剪切")
+    roll_deg: Optional[float] = Field(default=None, description="绕 Y 轴倾角（度）")
+    affine: Optional[List[float]] = Field(
+        default=None,
+        description="仿射矩阵 [a,b,c,d,e,f]：x=a*px+b*py+c，y=d*px+e*py+f；优先级高于 yaw/pitch/roll",
+    )
+    tx: Optional[float] = Field(default=None, description="图像原点(px=0,py=0) 对应的点云 X（米）")
+    ty: Optional[float] = Field(default=None, description="图像原点(px=0,py=0) 对应的点云 Y（米）")
+    reset: Optional[bool] = Field(default=None, description="true=清空 tf_*，回退到点云处理生成的 grid_origin_*/grid_resolution")
+
+    @validator("scale", "rot_deg", "pitch_deg", "roll_deg", "tx", "ty", pre=True)
+    def _blank_to_none(cls, value):
+        return blank_to_none(value)
+
+
 class MapOut(SQLModel):
     """地图信息（返回结构）"""
     id: int = Field(..., description="地图ID")

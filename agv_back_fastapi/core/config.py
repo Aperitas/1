@@ -34,6 +34,9 @@ project_desc = """
     【站点停靠模式 stop_mode】
     - timed：等一段时间自动走（时长由 dwell_time 秒控制）
     - wait_command：车端发命令才走（车端调用 POST /report/site_depart 或调度端下发 depart 指令）
+
+【在线文档】
+- 地图系统说明（传什么 / 存什么 / 坐标换算 / 栅格格式）：[打开 Map Guide](/help/map-guide)
 """
 
 

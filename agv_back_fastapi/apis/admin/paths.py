@@ -78,7 +78,7 @@ def _path_payload(session: Session, path: Path) -> dict:
     except Exception:
         nodes = []
     map_obj = session.get(Map, path.map_id) if path.map_id is not None else None
-    can_convert = bool(map_obj is not None and map_has_grid(map_obj) and map_has_bounds(map_obj))
+    can_grid = bool(map_obj is not None and map_has_grid(map_obj))
     cache = {}
     enriched = []
     for node in nodes:
@@ -86,10 +86,18 @@ def _path_payload(session: Session, path: Path) -> dict:
             enriched.append(node)
             continue
         item = dict(node)
+        if (node.get("type") or "").lower() == "point":
+            px_, py_ = node.get("x"), node.get("y")
+            conv = convert_coords(map_obj, x=px_, y=py_) if (can_grid and px_ is not None and py_ is not None) else {}
+            item["loc"] = None if conv.get("lon") is None else {"lon": conv["lon"], "lat": conv["lat"]}
+            item["pc"] = None if px_ is None or py_ is None else {
+                "x": px_, "y": py_, "px": conv.get("px"), "py": conv.get("py")}
+            enriched.append(item)
+            continue
         lon, lat = _node_lonlat(session, node, cache)
         item["loc"] = None if lon is None or lat is None else {"lon": lon, "lat": lat}
         item["pc"] = None
-        if can_convert and lon is not None and lat is not None:
+        if can_grid and lon is not None and lat is not None:
             conv = convert_coords(map_obj, lon=lon, lat=lat)
             item["pc"] = {"x": conv["x"], "y": conv["y"], "px": conv["px"], "py": conv["py"]}
         enriched.append(item)
@@ -112,6 +120,24 @@ def resolve_path_points(session: Session, path: Path, frame: str) -> dict:
     missing = 0
     for idx, node in enumerate(nodes):
         if not isinstance(node, dict):
+            continue
+        if (node.get("type") or "").lower() == "point":
+            px_, py_ = node.get("x"), node.get("y")
+            conv_p = convert_coords(map_obj, x=px_, y=py_) if (can_grid and px_ is not None and py_ is not None) else {}
+            item_p = {
+                "index": idx, "type": "point", "id": None, "name": None,
+                "stop_mode": None, "dwell_time": None,
+                "lon": conv_p.get("lon"), "lat": conv_p.get("lat"),
+                "px": conv_p.get("px"), "py": conv_p.get("py"),
+                "x": px_, "y": py_,
+            }
+            if frame == "pc" and (px_ is None or py_ is None):
+                missing += 1
+            if frame == "grid" and (item_p["px"] is None or item_p["py"] is None):
+                missing += 1
+            if frame == "lonlat" and (item_p["lon"] is None or item_p["lat"] is None):
+                missing += 1
+            points.append(item_p)
             continue
         lon, lat = _node_lonlat(session, node, cache)
         conv = convert_coords(map_obj, lon=lon, lat=lat) if (can_geo and lon is not None and lat is not None) else {}
@@ -161,6 +187,25 @@ def _find_temp_path(session: Session, car_id: int, map_id: int, exclude_path_id:
     return session.exec(query).first()
 
 
+def _validate_node_chain(nodes) -> Optional[str]:
+    """校验 node_chain：支持 site / waypoint / point 三种节点"""
+    if not isinstance(nodes, list):
+        return "node_chain 必须是数组"
+    for i, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            return "node_chain[%d] 必须是对象" % i
+        ntype = (node.get("type") or "").lower()
+        if ntype in ("site", "waypoint"):
+            if node.get("id") is None:
+                return "node_chain[%d] 缺少 id" % i
+        elif ntype == "point":
+            if node.get("x") is None or node.get("y") is None:
+                return "node_chain[%d] 是 point 节点时必须提供点云坐标 x / y（米）" % i
+        else:
+            return "node_chain[%d] 的 type 只能是 site / waypoint / point" % i
+    return None
+
+
 def _validate_temp_path(session: Session, car_id: Optional[int], map_id: int,
                         exclude_path_id: Optional[int] = None) -> Optional[str]:
     """临时路径规则：必须指定车辆、车辆需关联该地图、每车每图仅一条"""
@@ -182,7 +227,10 @@ async def create_path(
 ):
     """
     前端将规划好的路线（含有序节点列表）保存到数据库。
-    node_chain 示例：[{"type":"site","id":1}, {"type":"waypoint","id":3}]
+    node_chain 支持三种节点：
+    - {"type":"site","id":1}              站点（有停靠语义：stop_mode / dwell_time）
+    - {"type":"waypoint","id":3}          路径点
+    - {"type":"point","x":3.2,"y":-7.5}   纯几何点：**点云米制坐标**，不停靠（贝塞尔控制点等）
     """
     if not user.isAdmin:
         return resp_400(msg="仅管理员可操作")
@@ -190,6 +238,9 @@ async def create_path(
     map_obj = session.get(Map, data.map_id)
     if map_obj is None:
         return resp_400(msg="地图不存在")
+    error = _validate_node_chain(data.node_chain)
+    if error:
+        return resp_400(msg=error)
 
     # 临时路径：每车每图仅一条，重复则自动覆盖
     if data.is_temp:
@@ -208,9 +259,7 @@ async def create_path(
                 except Exception as e:
                     session.rollback()
                     return resp_500(msg=f"保存失败：{str(e)}")
-                out_data = existing.dict()
-                out_data["node_chain"] = json.loads(out_data["node_chain"])
-                return resp_200(data=out_data, msg="该车辆在此地图已有临时路径，已自动覆盖")
+                return resp_200(data=_path_payload(session, existing), msg="该车辆在此地图已有临时路径，已自动覆盖")
             return resp_400(msg=error)
 
     try:
@@ -227,10 +276,7 @@ async def create_path(
         session.add(path)
         session.commit()
         session.refresh(path)
-        # 返回时把 node_chain 转回 Python 对象
-        out_data = path.dict()
-        out_data["node_chain"] = json.loads(out_data["node_chain"])
-        return resp_200(data=out_data, msg="路线保存成功")
+        return resp_200(data=_path_payload(session, path), msg="路线保存成功")
     except Exception as e:
         session.rollback()
         return resp_500(msg=f"保存失败：{str(e)}")
@@ -325,6 +371,9 @@ async def update_path(
         return resp_400(msg="路线不存在")
     update_data = clean_update(data, allow_null={"car_id"})
     if "node_chain" in update_data:
+        error = _validate_node_chain(update_data["node_chain"])
+        if error:
+            return resp_400(msg=error)
         update_data["node_chain"] = json.dumps(update_data["node_chain"])
     for key, value in update_data.items():
         setattr(path, key, value)
@@ -345,9 +394,7 @@ async def update_path(
     session.add(path)
     session.commit()
     session.refresh(path)
-    out = path.dict()
-    out["node_chain"] = json.loads(out["node_chain"])
-    return resp_200(data=out, msg="路线更新成功")
+    return resp_200(data=_path_payload(session, path), msg="路线更新成功")
 
 @router.delete("/{path_id}", summary="删除路线")
 async def delete_path(

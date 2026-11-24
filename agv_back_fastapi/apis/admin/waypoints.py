@@ -7,6 +7,8 @@ from schemas.path import WaypointCreate, WaypointUpdate, WaypointOut
 from schemas.resp import ApiResponse
 from utils.resp_code import resp_200, resp_400, resp_500
 from utils.patch import clean_update
+from models.map import Map
+from utils.coords import resolve_pc_lonlat
 from core.security import get_current_user
 from models.user import Users
 from typing import Optional, List
@@ -23,8 +25,15 @@ async def create_waypoint(
     """管理员新增路径点（地图上标定的坐标点）。"""
     if not user.isAdmin:
         return resp_400(msg="仅管理员可操作")
+    map_obj = session.get(Map, data.map_id) if data.map_id is not None else None
+    if map_obj is None:
+        return resp_400(msg="所属地图不存在")
+    lon, lat, pc_x, pc_y, error = resolve_pc_lonlat(map_obj, data.lon, data.lat, data.pc_x, data.pc_y)
+    if error:
+        return resp_400(msg=error)
     try:
         wp = Waypoint(**data.dict())
+        wp.lon, wp.lat, wp.pc_x, wp.pc_y = lon, lat, pc_x, pc_y
         session.add(wp)
         session.commit()
         session.refresh(wp)
@@ -79,7 +88,20 @@ async def update_waypoint(
     wp = session.get(Waypoint, wp_id)
     if not wp:
         return resp_400(msg="路径点不存在")
-    for key, value in clean_update(data, allow_null={"description"}).items():
+    update = clean_update(data, allow_null={"description"})
+    if any(k in update for k in ("lon", "lat", "pc_x", "pc_y", "map_id")):
+        map_obj = session.get(Map, update.get("map_id", wp.map_id))
+        if map_obj is None:
+            return resp_400(msg="所属地图不存在")
+        lon, lat, pc_x, pc_y, error = resolve_pc_lonlat(
+            map_obj,
+            update.get("lon", wp.lon), update.get("lat", wp.lat),
+            update.get("pc_x", wp.pc_x), update.get("pc_y", wp.pc_y),
+        )
+        if error:
+            return resp_400(msg=error)
+        update.update({"lon": lon, "lat": lat, "pc_x": pc_x, "pc_y": pc_y})
+    for key, value in update.items():
         setattr(wp, key, value)
     session.add(wp)
     session.commit()

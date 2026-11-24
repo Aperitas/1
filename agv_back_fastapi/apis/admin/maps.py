@@ -11,16 +11,20 @@ from models.user.map_link import UserMapLink
 from apis.access import visible_map_ids
 from apis.views import car_payload
 from core.logger import logger
-from schemas.map import MapCreate, MapUpdate, MapOut
+from schemas.map import MapCreate, MapUpdate, MapOut, MapTransformIn
 from schemas.resp import ApiResponse
 from utils.resp_code import resp_200, resp_400, resp_500
 from utils.patch import clean_update
 from utils.pcd import PcdFormatError, build_grid, read_pcd_xyz, voxel_downsample, write_pcd_binary, write_png
-from utils.coords import convert as convert_coords, has_bounds as map_has_bounds, has_grid as map_has_grid
+from utils.coords import (
+    convert as convert_coords, corners_lonlat, corners_pc, get_transform,
+    has_bounds as map_has_bounds, has_grid as map_has_grid, transform_check,
+)
 from core.security import get_current_user, get_current_admin
 from models.user import Users
 from typing import List, Optional
 import mimetypes
+import uuid
 import os
 import re
 import shutil
@@ -73,6 +77,26 @@ def _apply_corner_fields(payload: dict) -> dict:
     if right_bottom_lat is not None:
         payload["lat_min"] = right_bottom_lat
     return payload
+
+
+def _cleanup_created_map(session: Session, map_obj, written):
+    """一步建图失败时回滚：删掉半成品文件与已插入的地图记录"""
+    for path in written or []:
+        try:
+            if path and os.path.exists(path):
+                os.remove(path)
+        except Exception as exc:
+            logger.warning("清理半成品文件失败 %s: %s" % (path, exc))
+    if map_obj is None or getattr(map_obj, "id", None) is None:
+        return
+    try:
+        exists = session.get(Map, map_obj.id)
+        if exists is not None:
+            session.delete(exists)
+            session.commit()
+    except Exception as exc:
+        session.rollback()
+        logger.warning("回滚地图记录失败 %s: %s" % (map_obj.id, exc))
 
 
 def _file_url(path: Optional[str]) -> Optional[str]:
@@ -258,6 +282,7 @@ async def process_pointcloud(
         z_low: float = Query(0.15, description="障碍判定下限：相对地面的高度（米）"),
         z_high: float = Query(1.8, description="障碍判定上限：相对地面的高度（米）"),
         replace: bool = Query(False, description="是否用降采样结果覆盖原点云文件"),
+        keep_original: bool = Query(False, description="是否保留原始大点云；默认 false=只留降采样结果（省磁盘）"),
         generate_grid: bool = Query(True, description="是否同时生成/覆盖栅格图"),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
@@ -338,6 +363,15 @@ async def process_pointcloud(
                 "z_floor": meta["z_floor"],
             }
 
+        # 原始大文件处理：replace 时已覆盖，否则按 keep_original 决定是否删除
+        original_deleted = False
+        if (not replace) and (not keep_original) and os.path.abspath(src) != os.path.abspath(out_path):
+            try:
+                os.remove(src)
+                original_deleted = True
+            except Exception as exc:
+                logger.warning("删除原始点云失败 %s: %s" % (src, exc))
+
         session.add(map_obj)
         session.commit()
         session.refresh(map_obj)
@@ -349,6 +383,7 @@ async def process_pointcloud(
             "before_size": before_size,
             "after_size": map_obj.pointcloud_file_size,
             "pointcloud_file_url": _file_url(map_obj.pointcloud_file_path),
+            "original_deleted": original_deleted,
             "bounds_of_cloud": {
                 "min_x": map_obj.pc_min_x, "max_x": map_obj.pc_max_x,
                 "min_y": map_obj.pc_min_y, "max_y": map_obj.pc_max_y,
@@ -409,10 +444,13 @@ async def map_coords(
     if not bounds_ok:
         result["lon"] = None
         result["lat"] = None
+    check = transform_check(map_obj)
     return resp_200(data={
         "map_id": map_id,
         "has_grid": True,
         "has_bounds": bounds_ok,
+        "transform": get_transform(map_obj),
+        "warnings": check.get("warnings", []),
         "grid_resolution": map_obj.grid_resolution,
         "grid_origin_x": map_obj.grid_origin_x,
         "grid_origin_y": map_obj.grid_origin_y,
@@ -423,6 +461,275 @@ async def map_coords(
         "x": result["x"], "y": result["y"],
         "lon": result["lon"], "lat": result["lat"],
     })
+
+
+@router.get("/{map_id}/transform", summary="查看地图变换（缩放/平移/旋转）与尺度自检")
+async def get_map_transform(
+        map_id: int = ApiPath(..., description="地图ID"),
+        session: Session = Depends(get_session),
+        user: Users = Depends(get_current_user)
+):
+    """返回当前生效的「像素 -> 点云」变换、图像四角坐标与尺度自检。
+
+    - source=tf：使用 tf_* 字段；source=grid：回退到点云处理生成的值；
+    - corners_pc：图像四角在点云中的坐标（车端坐标系）；
+    - corners_lonlat：图像四角按 bounds 铺满后的经纬度（展示用）；
+    - scale_ratio 偏离 1 超过 5% 时 warnings 会提示（图被拖动过 / bounds 没跟着改）。
+    """
+    map_obj = session.get(Map, map_id)
+    if not map_obj:
+        return resp_400(msg="地图不存在")
+    visible = visible_map_ids(session, user)
+    if visible is not None and map_id not in visible:
+        return resp_400(msg="无权访问该地图")
+
+    data = transform_check(map_obj)
+    data["map_id"] = map_id
+    data["corners_pc"] = corners_pc(map_obj)
+    data["corners_lonlat"] = corners_lonlat(map_obj)
+    return resp_200(data=data)
+
+
+@router.put("/{map_id}/transform", summary="设置地图变换（缩放/平移/旋转）")
+async def set_map_transform(
+        map_id: int = ApiPath(..., description="地图ID"),
+        data: MapTransformIn = Body(..., description="要修改的变换字段；reset=true 则清空回到自动值"),
+        session: Session = Depends(get_session),
+        user: Users = Depends(get_current_user)
+):
+    """设置「像素 -> 点云」变换（只改 tf_* 字段，**不会改动 bounds**）。
+
+    三种写法（优先级从高到低）：
+    1) 高级：传 `affine=[a,b,c,d,e,f]`，直接指定 x=a*px+b*py+c、y=d*px+e*py+f；
+    2) 三轴：传 `scale` + `rot_deg`(yaw) + `pitch_deg` + `roll_deg` + `tx`/`ty`，
+       后端按 Rz(yaw)*Ry(pitch)*Rx(roll) 正交投影合成仿射（pitch/roll 用于把歪掉的图转正）；
+    3) 简单：只传 `scale` + `rot_deg` + `tx`/`ty`（等价 pitch=roll=0）。
+
+    传了简单/三轴字段会清掉旧的 `affine`；`reset=true` 清空全部 tf_*，回退到点云处理生成的值。
+    """
+    if not user.isAdmin:
+        return resp_400(msg="仅管理员可操作")
+    map_obj = session.get(Map, map_id)
+    if not map_obj:
+        return resp_400(msg="地图不存在")
+
+    payload = data.dict(exclude_unset=True)
+    if payload.get("reset"):
+        # 全部清空：回退到「点云处理」生成的值
+        map_obj.tf_scale = None
+        map_obj.tf_rot_deg = None
+        map_obj.tf_tx = None
+        map_obj.tf_ty = None
+        map_obj.tf_pitch_deg = None
+        map_obj.tf_roll_deg = None
+        map_obj.tf_affine = None
+    else:
+        # 高级模式：前端自己算好的 2x3 仿射矩阵
+        if payload.get("affine") is not None:
+            vals = payload["affine"]
+            if not isinstance(vals, (list, tuple)) or len(vals) != 6:
+                return resp_400(msg="affine 必须是长度 6 的数组 [a,b,c,d,e,f]")
+            try:
+                vals = [float(v) for v in vals]
+            except (TypeError, ValueError):
+                return resp_400(msg="affine 的元素必须是数字")
+            map_obj.tf_affine = json.dumps(vals)
+
+        # 简单 / 三轴模式：传了任一角度或 scale/平移，就以三轴为准（清掉旧矩阵）
+        euler_keys = ("scale", "rot_deg", "pitch_deg", "roll_deg", "tx", "ty")
+        if any(k in payload and payload[k] is not None for k in euler_keys):
+            if payload.get("scale") is not None and payload["scale"] <= 0:
+                return resp_400(msg="scale 必须大于 0")
+            for key in euler_keys:
+                if key in payload and payload[key] is not None:
+                    setattr(map_obj, "tf_" + key, float(payload[key]))
+            map_obj.tf_affine = None
+
+    session.add(map_obj)
+    session.commit()
+    session.refresh(map_obj)
+
+    result = transform_check(map_obj)
+    result["map_id"] = map_id
+    result["corners_pc"] = corners_pc(map_obj)
+    result["corners_lonlat"] = corners_lonlat(map_obj)
+    return resp_200(data=result, msg="地图变换已更新")
+
+
+@router.post("/upload-pointcloud", summary="一步建图：上传点云 → 滤波 → 生成栅格 → 创建地图")
+async def create_map_from_pointcloud(
+        file: UploadFile = File(..., description="点云文件（.pcd，DATA=ascii / binary）"),
+        name: str = Form(..., description="地图名称"),
+        map_id: Optional[int] = Form(None, description="指定地图ID；不传则自增；已存在返回 400"),
+        description: Optional[str] = Form(None, description="地图描述"),
+        map_type: str = Form("local", description="地图类型，默认 local"),
+        center_lon: Optional[float] = Form(None, description="地图中心经度（默认南科大基准）"),
+        center_lat: Optional[float] = Form(None, description="地图中心纬度（默认南科大基准）"),
+        zoom: Optional[int] = Form(None, description="默认缩放级别（默认 17）"),
+        left_top_lon: Optional[float] = Form(None, description="区域左上角经度（西边界）"),
+        left_top_lat: Optional[float] = Form(None, description="区域左上角纬度（北边界）"),
+        right_bottom_lon: Optional[float] = Form(None, description="区域右下角经度（东边界）"),
+        right_bottom_lat: Optional[float] = Form(None, description="区域右下角纬度（南边界）"),
+        leaf_size: float = Form(0.05, description="体素降采样边长（米），0=不降采样"),
+        grid_resolution: float = Form(0.05, description="栅格分辨率（米/像素）"),
+        grid_mode: str = Form("occupancy", description="栅格模式：occupancy=占用(黑白) / height=高度灰度"),
+        z_low: float = Form(0.15, description="障碍判定下限：相对地面的高度（米）"),
+        z_high: float = Form(1.8, description="障碍判定上限：相对地面的高度（米）"),
+        keep_original: bool = Form(False, description="是否保留原始大点云；默认 false=只留降采样结果"),
+        session: Session = Depends(get_session),
+        user: Users = Depends(get_current_user)
+):
+    """一次性完成「上传点云 → 降采样滤波 → 生成栅格 → 建立地图」。
+
+    与「先建空地图 → /upload → /pointcloud/process」相比：
+
+    - 只要一次请求；
+    - 原始大文件默认**不落盘**（keep_original=false），磁盘只留降采样后的 PCD 与栅格 PNG；
+    - `map_id` 可由前端指定（便于和前端编号对齐），不传则自增，已存在返回 400；
+    - 任一步失败都会回滚：删除已插入的地图记录与半成品文件（PCD / PNG）。
+
+    地图的空间信息（pointcloud_point_count、pc_min/max、grid_origin/resolution/width/height）
+    会由本次处理自动回填，随后可直接用 /admin/maps/{id}/coords 做坐标换算。
+    """
+    if not user.isAdmin:
+        return resp_400(msg="仅管理员可操作")
+    if grid_mode not in ("occupancy", "height"):
+        return resp_400(msg="grid_mode 只能是 occupancy 或 height")
+    if map_type not in VALID_MAP_TYPES:
+        return resp_400(msg="map_type 只能是 %s" % sorted(VALID_MAP_TYPES))
+    suffix = os.path.splitext(file.filename or "")[1].lower()
+    if suffix != ".pcd":
+        return resp_400(msg="目前只支持 .pcd 点云（DATA=ascii / binary）")
+    if map_id is not None and session.get(Map, map_id) is not None:
+        return resp_400(msg="地图ID %d 已存在，请换一个或留空让系统自增" % map_id)
+
+    started = time.time()
+    stem = _safe_stem(file.filename)
+    temp_path = os.path.join(MAP_UPLOAD_DIR, "_tmp_%s.pcd" % uuid.uuid4().hex)
+    map_obj = None
+    written = []
+
+    def _save_upload():
+        with open(temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+    try:
+        # ---------- 1) 上传流先落到临时文件（避免大文件占内存） ----------
+        await run_in_threadpool(_save_upload)
+        if not os.path.exists(temp_path) or os.path.getsize(temp_path) == 0:
+            return resp_400(msg="上传的文件为空")
+        before_size = os.path.getsize(temp_path)
+
+        # ---------- 2) 先插地图记录拿到 id（指定 map_id 时直接用它） ----------
+        map_fields = {
+            "name": name,
+            "description": description,
+            "map_type": map_type,
+            "center_lon": center_lon if center_lon is not None else 113.9686,
+            "center_lat": center_lat if center_lat is not None else 22.6042,
+            "zoom": zoom if zoom is not None else 17,
+            "lon_min": left_top_lon,
+            "lat_max": left_top_lat,
+            "lon_max": right_bottom_lon,
+            "lat_min": right_bottom_lat,
+        }
+        if map_id is not None:
+            map_fields["id"] = map_id
+        map_obj = Map(**map_fields)
+        error = _validate_map_object(map_obj, session)
+        if error:
+            return resp_400(msg=error)
+        session.add(map_obj)
+        session.commit()
+        session.refresh(map_obj)
+
+        # ---------- 3) 读点云 → 体素降采样 ----------
+        xyz = read_pcd_xyz(temp_path)
+        before_points = int(len(xyz))
+        pts = voxel_downsample(xyz, leaf_size) if leaf_size and leaf_size > 0 else xyz
+        after_points = int(len(pts))
+
+        # ---------- 4) 写降采样 PCD；原始大文件按 keep_original 处理 ----------
+        pc_path = os.path.join(MAP_UPLOAD_DIR, "map_%d_pc_%s_down.pcd" % (map_obj.id, stem))
+        write_pcd_binary(pc_path, pts)
+        written.append(pc_path)
+        if keep_original:
+            raw_path = os.path.join(MAP_UPLOAD_DIR, "map_%d_pc_%s%s" % (map_obj.id, stem, suffix))
+            shutil.copyfile(temp_path, raw_path)
+            written.append(raw_path)
+
+        # ---------- 5) 俯视投影生成栅格 PNG ----------
+        pixels, meta = build_grid(pts, resolution=grid_resolution, mode=grid_mode, z_low=z_low, z_high=z_high)
+        grid_path = os.path.join(
+            MAP_UPLOAD_DIR, "map_%d_grid_auto_%sm.png" % (map_obj.id, str(grid_resolution).replace(".", "_")))
+        write_png(grid_path, pixels)
+        written.append(grid_path)
+
+        # ---------- 6) 回填地图字段 ----------
+        now = datetime.now()
+        map_obj.pointcloud_file_path = pc_path
+        map_obj.pointcloud_file_type = "pcd"
+        map_obj.pointcloud_file_size = os.path.getsize(pc_path)
+        map_obj.pointcloud_file_upload_time = now
+        map_obj.pointcloud_point_count = after_points
+        map_obj.pc_min_x = float(pts[:, 0].min())
+        map_obj.pc_max_x = float(pts[:, 0].max())
+        map_obj.pc_min_y = float(pts[:, 1].min())
+        map_obj.pc_max_y = float(pts[:, 1].max())
+        map_obj.pc_min_z = float(pts[:, 2].min())
+        map_obj.pc_max_z = float(pts[:, 2].max())
+        map_obj.grid_file_path = grid_path
+        map_obj.grid_file_type = "png"
+        map_obj.grid_file_size = os.path.getsize(grid_path)
+        map_obj.grid_file_upload_time = now
+        map_obj.grid_origin_x = meta["origin_x"]
+        map_obj.grid_origin_y = meta["origin_y"]
+        map_obj.grid_resolution = meta["resolution"]
+        map_obj.grid_width = meta["width"]
+        map_obj.grid_height = meta["height"]
+        session.add(map_obj)
+        session.commit()
+        session.refresh(map_obj)
+
+        payload = _map_payload(map_obj)
+        payload["stats"] = {
+            "before_points": before_points,
+            "after_points": after_points,
+            "before_size": before_size,
+            "after_size": map_obj.pointcloud_file_size,
+            "grid_width": meta["width"],
+            "grid_height": meta["height"],
+            "grid_resolution": meta["resolution"],
+            "grid_origin_x": meta["origin_x"],
+            "grid_origin_y": meta["origin_y"],
+            "z_floor": meta["z_floor"],
+            "elapsed_ms": int((time.time() - started) * 1000),
+            "original_kept": bool(keep_original),
+        }
+        logger.info("一步建图成功: map_id=%s %s -> %s 点 / %s 字节" % (
+            map_obj.id, before_points, after_points, map_obj.pointcloud_file_size))
+        return resp_200(msg="地图创建成功", data=payload)
+
+    except PcdFormatError as e:
+        session.rollback()
+        _cleanup_created_map(session, map_obj, written)
+        return resp_400(msg=str(e))
+    except ValueError as e:
+        session.rollback()
+        _cleanup_created_map(session, map_obj, written)
+        return resp_400(msg=str(e))
+    except Exception as e:
+        session.rollback()
+        _cleanup_created_map(session, map_obj, written)
+        logger.error("一步建图失败: %s" % e)
+        return resp_500(msg="建图失败: %s" % str(e))
+    finally:
+        # 临时上传文件始终删除（keep_original 时内容已另存为正式文件）
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except Exception as exc:
+            logger.warning("清理临时点云失败 %s: %s" % (temp_path, exc))
 
 
 @router.delete("/{map_id}/files/{kind}", summary="删除地图的点云/栅格文件")

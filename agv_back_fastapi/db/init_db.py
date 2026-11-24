@@ -13,7 +13,8 @@ from db import engine
 # 注意：当前使用 SQLite；若切换到 PostgreSQL，布尔列请改成 "BOOLEAN DEFAULT FALSE"
 _COLUMN_MIGRATIONS = {
     "users": {"role": "VARCHAR DEFAULT 'guest'", "avatar": "VARCHAR"},
-    "sites": {"stop_mode": "VARCHAR DEFAULT 'timed'"},
+    "sites": {"stop_mode": "VARCHAR DEFAULT 'timed'", "pc_x": "FLOAT", "pc_y": "FLOAT"},
+    "waypoints": {"pc_x": "FLOAT", "pc_y": "FLOAT"},
     "paths": {"is_temp": "BOOLEAN DEFAULT 0", "map_type": "VARCHAR DEFAULT 'tianditu'"},
     "maps": {
         "map_type": "VARCHAR DEFAULT 'tianditu'",
@@ -29,6 +30,8 @@ _COLUMN_MIGRATIONS = {
         "pc_max_y": "FLOAT", "pc_min_z": "FLOAT", "pc_max_z": "FLOAT",
         "grid_origin_x": "FLOAT", "grid_origin_y": "FLOAT", "grid_resolution": "FLOAT",
         "grid_width": "INTEGER", "grid_height": "INTEGER",
+        "tf_scale": "FLOAT", "tf_rot_deg": "FLOAT", "tf_tx": "FLOAT", "tf_ty": "FLOAT",
+        "tf_pitch_deg": "FLOAT", "tf_roll_deg": "FLOAT", "tf_affine": "VARCHAR",
     },
 }
 

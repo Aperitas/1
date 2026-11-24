@@ -9,8 +9,10 @@ from datetime import datetime
 class SiteCreate(SQLModel):
     """新增站点（管理员）：站点是路线上的停靠点，可配置停靠模式"""
     name: str = Field(..., description="站点名称，如 '图书馆站'")
-    lon: float = Field(..., description="站点经度")
-    lat: float = Field(..., description="站点纬度")
+    lon: Optional[float] = Field(default=None, description="站点经度（与 pc_x/pc_y 二选一；都给则校验一致性）")
+    lat: Optional[float] = Field(default=None, description="站点纬度（与 pc_x/pc_y 二选一；都给则校验一致性）")
+    pc_x: Optional[float] = Field(default=None, description="点云坐标 X（米），前端在点云图上取点直接传这个")
+    pc_y: Optional[float] = Field(default=None, description="点云坐标 Y（米）")
     dwell_time: Optional[int] = Field(default=0, description="停靠时长（秒），仅 stop_mode=timed 时生效")
     stop_mode: str = Field(
         default="timed",
@@ -28,8 +30,10 @@ class SiteUpdate(SQLModel):
     stop_mode: Optional[str] = Field(default=None, description="停靠模式：timed / wait_command")
     description: Optional[str] = Field(default=None, description="站点备注")
     map_id: Optional[int] = Field(default=None, description="所属地图ID")
+    pc_x: Optional[float] = Field(default=None, description="点云坐标 X（米）")
+    pc_y: Optional[float] = Field(default=None, description="点云坐标 Y（米）")
 
-    @validator("lon", "lat", "dwell_time", "map_id", pre=True)
+    @validator("lon", "lat", "dwell_time", "map_id", "pc_x", "pc_y", pre=True)
     def _blank_to_none(cls, value):
         return blank_to_none(value)
 
@@ -44,13 +48,17 @@ class SiteOut(SQLModel):
     description: Optional[str] = Field(default=None, description="站点备注")
     map_id: int = Field(..., description="所属地图ID")
     created_at: datetime = Field(..., description="创建时间")
+    pc_x: Optional[float] = Field(default=None, description="点云坐标 X（米）")
+    pc_y: Optional[float] = Field(default=None, description="点云坐标 Y（米）")
 
 # ---------- 路径点 ----------
 class WaypointCreate(SQLModel):
     """新增路径点（管理员）：路径点是地图上标定的坐标点，可用于组成路线"""
     name: str = Field(..., description="路径点名称，如 'A点'")
-    lon: float = Field(..., description="经度")
-    lat: float = Field(..., description="纬度")
+    lon: Optional[float] = Field(default=None, description="经度（与 pc_x/pc_y 二选一）")
+    lat: Optional[float] = Field(default=None, description="纬度（与 pc_x/pc_y 二选一）")
+    pc_x: Optional[float] = Field(default=None, description="点云坐标 X（米）")
+    pc_y: Optional[float] = Field(default=None, description="点云坐标 Y（米）")
     description: Optional[str] = Field(default=None, description="备注")
     map_id: int = Field(..., description="所属地图ID")
 
@@ -61,8 +69,10 @@ class WaypointUpdate(SQLModel):
     lat: Optional[float] = Field(default=None, description="纬度")
     description: Optional[str] = Field(default=None, description="备注")
     map_id: Optional[int] = Field(default=None, description="所属地图ID")
+    pc_x: Optional[float] = Field(default=None, description="点云坐标 X（米）")
+    pc_y: Optional[float] = Field(default=None, description="点云坐标 Y（米）")
 
-    @validator("lon", "lat", "map_id", pre=True)
+    @validator("lon", "lat", "map_id", "pc_x", "pc_y", pre=True)
     def _blank_to_none(cls, value):
         return blank_to_none(value)
 
@@ -75,6 +85,8 @@ class WaypointOut(SQLModel):
     description: Optional[str] = Field(default=None, description="备注")
     map_id: int = Field(..., description="所属地图ID")
     created_at: datetime = Field(..., description="创建时间")
+    pc_x: Optional[float] = Field(default=None, description="点云坐标 X（米）")
+    pc_y: Optional[float] = Field(default=None, description="点云坐标 Y（米）")
 
 # ---------- 路线 ----------
 class PathCreate(SQLModel):

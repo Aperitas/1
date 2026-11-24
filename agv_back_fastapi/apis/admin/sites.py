@@ -7,6 +7,8 @@ from schemas.path import SiteCreate, SiteUpdate, SiteOut
 from schemas.resp import ApiResponse
 from utils.resp_code import resp_200, resp_400, resp_500
 from utils.patch import clean_update
+from models.map import Map
+from utils.coords import resolve_pc_lonlat
 from core.security import get_current_user
 from models.user import Users
 from typing import List
@@ -43,8 +45,16 @@ async def create_site(
     error = _validate_site(data)
     if error:
         return resp_400(msg=error)
+
+    map_obj = session.get(Map, data.map_id) if data.map_id is not None else None
+    if map_obj is None:
+        return resp_400(msg="所属地图不存在")
+    lon, lat, pc_x, pc_y, error = resolve_pc_lonlat(map_obj, data.lon, data.lat, data.pc_x, data.pc_y)
+    if error:
+        return resp_400(msg=error)
     try :
         site = Site(**data.dict())
+        site.lon, site.lat, site.pc_x, site.pc_y = lon, lat, pc_x, pc_y
         session.add(site)
         session.commit()
         session.refresh(site)
@@ -102,7 +112,20 @@ async def update_site(
     site = session.get(Site, site_id)
     if not site:
         return resp_400(msg="站点不存在")
-    for key, value in clean_update(data, allow_null={"description"}).items():
+    update = clean_update(data, allow_null={"description"})
+    if any(k in update for k in ("lon", "lat", "pc_x", "pc_y", "map_id")):
+        map_obj = session.get(Map, update.get("map_id", site.map_id))
+        if map_obj is None:
+            return resp_400(msg="所属地图不存在")
+        lon, lat, pc_x, pc_y, error = resolve_pc_lonlat(
+            map_obj,
+            update.get("lon", site.lon), update.get("lat", site.lat),
+            update.get("pc_x", site.pc_x), update.get("pc_y", site.pc_y),
+        )
+        if error:
+            return resp_400(msg=error)
+        update.update({"lon": lon, "lat": lat, "pc_x": pc_x, "pc_y": pc_y})
+    for key, value in update.items():
         setattr(site, key, value)
     session.add(site)
     session.commit()

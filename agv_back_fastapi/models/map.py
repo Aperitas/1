@@ -61,6 +61,15 @@ class Map(SQLModel, table=True):
     grid_resolution: Optional[float] = Field(default=None, description="栅格分辨率（米/像素）")
     grid_width: Optional[int] = Field(default=None, description="栅格宽度（像素）")
     grid_height: Optional[int] = Field(default=None, description="栅格高度（像素）")
+
+    # ===== 地图变换（栅格像素 <-> 点云米）：为空时回退到 grid_origin_* / grid_resolution =====
+    tf_scale: Optional[float] = Field(default=None, description="变换：米/像素（为空则用 grid_resolution）")
+    tf_rot_deg: Optional[float] = Field(default=None, description="变换：旋转角（度，逆时针为正；为空则 0）")
+    tf_tx: Optional[float] = Field(default=None, description="变换：图像原点(px=0,py=0) 对应的点云 X（为空则用 grid_origin_x）")
+    tf_ty: Optional[float] = Field(default=None, description="变换：图像原点(px=0,py=0) 对应的点云 Y（为空则用 grid_origin_y）")
+    tf_pitch_deg: Optional[float] = Field(default=None, description="变换：绕 X 轴倾角（度，正交俯视下等价于纵向剪切+压缩）")
+    tf_roll_deg: Optional[float] = Field(default=None, description="变换：绕 Y 轴倾角（度）")
+    tf_affine: Optional[str] = Field(default=None, description="变换：仿射矩阵 JSON [a,b,c,d,e,f]，等效 x=a*px+b*py+c, y=d*px+e*py+f；设置后优先级高于 yaw/pitch/roll")
     # ===== 以下为历史字段（早期单文件版本），保留但不再读写 =====
     file_path: Optional[str] = Field(default=None, description="历史字段：早期地图文件路径")
     file_type: Optional[str] = Field(default=None, description="历史字段：早期地图文件类型")
