@@ -85,6 +85,9 @@ class CarCreateIn(BaseModel):
     weight: Optional[float] = Field(default=50.0, description="载重（kg）")
     ip: Optional[str] = Field(default="192.168.1.100", description="车端 IP")
     port: Optional[str] = Field(default="9090", description="车端端口")
+    lon: Optional[float] = Field(default=113.9686, ge=-180, le=180, description="初始经度（WGS84），默认南科大基准")
+    lat: Optional[float] = Field(default=22.6042, ge=-90, le=90, description="初始纬度（WGS84），默认南科大基准")
+    yaw: Optional[float] = Field(default=0.0, description="初始航向角（度，0=正北，顺时针）")
     map_ids: Optional[List[int]] = Field(default=None, description="车辆所属地图ID列表（可多选）")
     video_streams: Optional[Dict[str, str]] = Field(
         default=None,
@@ -100,6 +103,7 @@ async def create_car(
     """
     在系统中新增一台小车。如果新增成功，返回自动生成的 car_id。
     可通过 map_ids 指定该车所属地图（多选，可不传）。
+    可传 lon/lat/yaw 指定初始经纬度与航向，不传则用南科大基准坐标。
     """
     if not user.isAdmin:
         return resp_400(msg="权限不足，仅管理员可操作")
@@ -121,9 +125,9 @@ async def create_car(
             ip=data.ip,
             port=data.port,
             status=CarStatus.FREE,      # 默认状态为空闲
-            lon=113.9686,               # 默认南科大经纬度
-            lat=22.6042,
-            yaw=0.0,
+            lon=data.lon,
+            lat=data.lat,
+            yaw=data.yaw,
             speed=0.0,
             battery=100.0,
             video_streams=dump_streams(data.video_streams),
@@ -157,6 +161,9 @@ class CarUpdateIn(BaseModel):
     weight: Optional[float] = Field(default=None, description="载重（kg）")
     ip: Optional[str] = Field(default=None, description="车端 IP")
     port: Optional[str] = Field(default=None, description="车端端口")
+    lon: Optional[float] = Field(default=None, ge=-180, le=180, description="经度（WGS84），可手动校正，范围 -180~180")
+    lat: Optional[float] = Field(default=None, ge=-90, le=90, description="纬度（WGS84），可手动校正，范围 -90~90")
+    yaw: Optional[float] = Field(default=None, description="航向角（度，0=正北，顺时针）")
     status: Optional[int] = Field(default=None, description="状态：0关机/1空闲/2工作中/3暂停/4充电/5故障")
     description: Optional[str] = Field(default=None, description="备注")
     map_ids: Optional[List[int]] = Field(default=None, description="车辆所属地图ID列表（传了就整体覆盖，传 [] 表示解除全部）")
@@ -174,6 +181,7 @@ async def update_car(
 ):
     """
     修改指定小车的信息。只需传需要修改的字段，未传的字段保持原样。
+    支持手动校正经纬度/航向（lon/lat/yaw）：车端没上报 GPS 时，管理员可直接摆放车辆位置。
     """
     if not user.isAdmin:
         return resp_400(msg="权限不足，仅管理员可操作")
