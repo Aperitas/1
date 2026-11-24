@@ -4,7 +4,7 @@ date:2022年06月28日
 """
 import datetime
 
-from fastapi import APIRouter,Depends
+from fastapi import APIRouter,Body,Depends
 from fastapi import Path
 from sqlmodel import select, delete
 from apis.access import normalize_ids
@@ -17,6 +17,7 @@ from models.map import Map
 from models.user.map_link import UserMapLink
 from models.user.users import Users, UserRole
 from utils.resp_code import resp_200,resp_500,resp_400
+from utils.patch import clean_update
 
 user_api = APIRouter(prefix='/user')
 
@@ -60,7 +61,7 @@ async def create_new_user(userInfo: CreateUser,login_user: Users = Depends(get_c
 # ------------------新增：编辑用户信息接口 PUT ------------------
 @user_api.put("/{user_id}", summary="管理员修改指定用户信息")
 async def update_target_user(
-        update_data: UserUpdate,
+        update_data: UserUpdate = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），nickname/avatar/map_id 传 null 表示清空", example={"nickname": "小李", "role": "dispatcher"}),
         user_id: int = Path(..., description="待修改用户ID"),
         login_user: Users = Depends(get_current_admin)
 ):
@@ -72,8 +73,12 @@ async def update_target_user(
             if not target_user:
                 return resp_400(msg="目标用户不存在")
 
-            # 只更新前端传入的字段（pydantic v1 用 dict，不能用 model_dump）
-            update_dict = update_data.dict(exclude_unset=True)
+            # 只更新前端真正传入的字段（pydantic v1 用 dict）：null / 空串视为不修改
+            update_dict = clean_update(update_data, allow_null={"nickname", "avatar", "map_id"})
+            # users.nickname 在库里是 NOT NULL：传 null 表示清空昵称，落库用空串
+            if "nickname" in update_dict and update_dict["nickname"] is None:
+                update_dict["nickname"] = ""
+            new_map_ids = update_dict.pop("map_ids", None)
 
             # 角色与 isAdmin 同步：优先 role；只传 isAdmin 时折算成角色
             new_role = update_dict.pop("role", None)
@@ -99,8 +104,8 @@ async def update_target_user(
                 setattr(target_user, k, v)
 
             # 账户负责的地图（多对多，覆盖式）
-            if "map_ids" in update_data.dict(exclude_unset=True):
-                new_map_ids = normalize_ids(update_data.map_ids or [])
+            if new_map_ids is not None:
+                new_map_ids = normalize_ids(new_map_ids)
                 existing = set(session.exec(select(Map.id).where(Map.id.in_(new_map_ids))).all()) if new_map_ids else set()
                 missing = [m for m in new_map_ids if m not in existing]
                 if missing:

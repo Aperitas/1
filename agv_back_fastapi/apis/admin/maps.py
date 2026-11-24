@@ -13,6 +13,7 @@ from apis.views import car_payload
 from core.logger import logger
 from schemas.map import MapCreate, MapUpdate, MapOut
 from utils.resp_code import resp_200, resp_400, resp_500
+from utils.patch import clean_update
 from core.security import get_current_user, get_current_admin
 from models.user import Users
 from typing import List, Optional
@@ -385,7 +386,7 @@ async def list_map_users(
 @router.put("/{map_id}", summary="修改地图信息")
 async def update_map(
         map_id: int = ApiPath(..., description="地图ID"),
-        data: MapUpdate = Body(..., description="要修改的字段（只传需要改的）"),
+        data: MapUpdate = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），description/fallback_map_id 传 null 表示清空", example={"name": "南科大-1F"}),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
@@ -396,7 +397,7 @@ async def update_map(
     if not map_obj:
         return resp_400(msg="地图不存在")
     old_map_type = map_obj.map_type
-    for key, value in _apply_corner_fields(data.dict(exclude_unset=True)).items():
+    for key, value in _apply_corner_fields(clean_update(data, allow_null={"description", "fallback_map_id"})).items():
         setattr(map_obj, key, value)
     error = _validate_map_object(map_obj, session)
     if error:

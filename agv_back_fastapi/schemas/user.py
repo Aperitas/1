@@ -78,7 +78,7 @@ class UserMapSetIn(BaseModel):
 
 class ProfileUpdateIn(BaseModel):
     """用户修改自己资料时使用的请求体（不含角色/密码）"""
-    name: Optional[str] = Field(default=None,min_length=1,max_length=50,description="用户名")
+    name: Optional[str] = Field(default=None,max_length=50,description="用户名（传空串/null 视为不修改）")
     nickname: Optional[str] = Field(default=None,max_length=50,description="昵称")
     avatar: Optional[str] = Field(default=None,max_length=255,description="头像URL")
 

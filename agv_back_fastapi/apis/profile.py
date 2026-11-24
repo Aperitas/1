@@ -6,7 +6,7 @@ import os
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Body, Depends, File, UploadFile
 
 from core.logger import logger
 from core.security import get_current_user, get_password_hash, verify_password
@@ -16,6 +16,7 @@ from models.map import Map
 from models.user.users import Users
 from schemas.user import OutputUser, PasswordChangeIn, ProfileUpdateIn
 from utils.resp_code import resp_200, resp_400, resp_500
+from utils.patch import clean_update
 from sqlmodel import select
 
 profile_api = APIRouter(prefix='/profile')
@@ -41,9 +42,12 @@ async def get_my_profile(user: Users = Depends(get_current_user)) :
 
 
 @profile_api.put("", summary="修改自己的资料")
-async def update_my_profile(data: ProfileUpdateIn,user: Users = Depends(get_current_user)) :
+async def update_my_profile(data: ProfileUpdateIn = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），nickname/avatar 传 null 表示清空", example={"nickname": "小李"}),user: Users = Depends(get_current_user)) :
     """ 修改自己的用户名/昵称/邮箱/手机/头像；角色与密码不能在这里修改 """
-    update_data = data.dict(exclude_unset=True)
+    update_data = clean_update(data, allow_null={"nickname", "avatar"})
+    # users.nickname 在库里是 NOT NULL：传 null 表示清空昵称，落库用空串
+    if "nickname" in update_data and update_data["nickname"] is None:
+        update_data["nickname"] = ""
     if not update_data :
         return resp_400(msg="没有需要修改的字段")
 

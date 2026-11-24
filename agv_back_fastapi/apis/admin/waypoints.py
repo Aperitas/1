@@ -5,6 +5,7 @@ from models.waypoint import Waypoint
 from apis.access import visible_map_ids
 from schemas.path import WaypointCreate, WaypointUpdate
 from utils.resp_code import resp_200, resp_400, resp_500
+from utils.patch import clean_update
 from core.security import get_current_user
 from models.user import Users
 from typing import Optional
@@ -67,7 +68,7 @@ async def get_waypoint(
 @router.put("/{wp_id}", summary="修改路径点信息")
 async def update_waypoint(
         wp_id: int = Path(..., description="路径点ID"),
-        data: WaypointUpdate = Body(..., description="要修改的字段（只传需要改的）"),
+        data: WaypointUpdate = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），description 传 null 表示清空", example={"description": "门口停靠点"}),
         session: Session = Depends(get_session),
         user: Users = Depends(get_current_user)
 ):
@@ -77,7 +78,7 @@ async def update_waypoint(
     wp = session.get(Waypoint, wp_id)
     if not wp:
         return resp_400(msg="路径点不存在")
-    for key, value in data.dict(exclude_unset=True).items():
+    for key, value in clean_update(data, allow_null={"description"}).items():
         setattr(wp, key, value)
     session.add(wp)
     session.commit()

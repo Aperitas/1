@@ -16,6 +16,7 @@ from models.user.users import Users
 from apis.access import visible_map_ids
 from apis.views import car_payload
 from utils.video_streams import dump_streams, parse_streams
+from utils.patch import clean_update
 from utils.resp_code import resp_200, resp_500, resp_400
 from apis.websocket.process import manager
 from pydantic import BaseModel, Field
@@ -175,7 +176,7 @@ class CarUpdateIn(BaseModel):
 @car_api.put("/{car_id}/update", summary="修改小车信息")
 async def update_car(
     car_id: int = ApiPath(..., description="车辆ID"),
-    data: CarUpdateIn = Body(..., description="要修改的字段（只传需要改的）"),
+    data: CarUpdateIn = Body(..., description="要修改的字段（只传需要改的；不传 / 传 null / 传空串均表示保持原值），description 传 null 表示清空", example={"name": "轮椅", "status": 1}),
     session: Session = Depends(get_session),
     user: Users = Depends(get_current_user)
 ):
@@ -192,7 +193,7 @@ async def update_car(
         
     try:
         # 遍历传入的字段并更新；map_ids 不是 Cars 的列，单独处理
-        update_data = data.dict(exclude_unset=True)
+        update_data = clean_update(data, allow_null={"description"})
         new_map_ids = update_data.pop("map_ids", None)
         new_streams = update_data.pop("video_streams", None)
         if new_streams:
